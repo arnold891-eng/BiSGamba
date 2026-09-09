@@ -1,0 +1,1395 @@
+-- Headless harness for BiSGamba: stubs enough of the WoW API to load the addon
+-- and run a few rounds, ties, the ledger and the trade payout path.
+-- lua5.1 dev/harness.lua   (run from the BiSGamba folder)
+
+local chat, said, timers, rolled = {}, {}, {}, {}
+local pass, fail = 0, 0
+local function check(cond, what)
+  if cond then pass = pass + 1 else fail = fail + 1; print("FAIL: " .. what) end
+end
+local function lastChat() return chat[#chat] or "" end
+local function strip(s) return (tostring(s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+
+---------------------------------------------------------------- frames
+local Frame = {}
+Frame.__index = function(t, k)
+  if rawget(Frame, k) then return rawget(Frame, k) end
+  if type(k) == "string" and k:match("^%u") then return function() return nil end end
+  return nil
+end
+local function newFrame(kind, name, parent)
+  local f = setmetatable({ kind = kind, name = name, parent = parent, scripts = {}, shown = true, w = 100, h = 100 }, Frame)
+  if name then _G[name] = f end
+  return f
+end
+function Frame:SetScript(ev, fn) self.scripts[ev] = fn end
+function Frame:GetScript(ev) return self.scripts[ev] end
+function Frame:Show() self.shown = true end
+function Frame:Hide() self.shown = false end
+function Frame:IsShown() return self.shown end
+function Frame:IsVisible() return self.shown end
+function Frame:GetPoint() return "CENTER", nil, "CENTER", 10, 20 end
+function Frame:SetSize(w, h) self.w, self.h = w, h end
+function Frame:GetWidth() return self.w end
+function Frame:SetText(t) self.text_ = t end
+function Frame:GetText() return self.text_ end
+function Frame:CreateTexture() return newFrame("Texture", nil, self) end
+function Frame:CreateFontString() return newFrame("FontString", nil, self) end
+function Frame:CreateAnimationGroup() return newFrame("AnimationGroup", nil, self) end
+function Frame:CreateAnimation() return newFrame("Animation", nil, self) end
+function Frame:SetShown(v) self.shown = v and true or false end
+function Frame:SetEnabled(v) self.enabled = v and true or false end
+function Frame:SetChecked(v) self.checked = v and true or false end
+function Frame:GetChecked() return self.checked end
+function Frame:RegisterEvent(e)
+  if e == "PARTY_MEMBERS_CHANGED" then error("unknown event") end
+  self.events = self.events or {}; self.events[e] = true
+end
+function Frame:SetAnimation(a) self.anim = a end
+function Frame:SetUnit(u) if u == "raid99" then error("bad unit") end self.unit = u; self.model = "unit:" .. u end
+function Frame:SetCreature(id) self.model = "npc:" .. id end
+function Frame:SetDisplayInfo(id) self.model = "display:" .. id end
+function Frame:ClearModel() self.model = nil end
+function CreateFrame(kind, name, parent) return newFrame(kind, name, parent) end
+UIParent = newFrame("Frame", "UIParent")
+Minimap = newFrame("Frame", "Minimap")
+GameTooltip = newFrame("GameTooltip", "GameTooltip")
+TradeFrame = newFrame("Frame", "TradeFrame"); TradeFrame.shown = false
+TradePlayerInputMoneyFrame = newFrame("Frame", "TradePlayerInputMoneyFrame")
+UISpecialFrames = {}
+StaticPopupDialogs = {}
+local popup = nil
+function StaticPopup_Show(key) popup = StaticPopupDialogs[key] end
+local function acceptPopup() if popup and popup.OnAccept then popup.OnAccept() end end
+SlashCmdList = {}
+DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) chat[#chat + 1] = strip(m) end }
+GameFontHighlightSmall = {}
+RAID_CLASS_COLORS = { SHAMAN = { r = 0, g = 0.44, b = 0.87 }, MAGE = { r = 0.41, g = 0.8, b = 0.94 } }
+RANDOM_ROLL_RESULT = "%s rolls %d (%d-%d)"
+ERR_TRADE_COMPLETE = "Trade complete."
+
+---------------------------------------------------------------- world
+local me = "Kumlust"
+local group = { raid1 = { name = "Kumlust", class = "SHAMAN", race = "Draenei", sex = 3, vis = true },
+                raid2 = { name = "Gnomerpills", class = "MAGE", race = "Gnome", sex = 2, vis = true },
+                raid3 = { name = "Kumsecration", class = "PALADIN", race = "Dwarf", sex = 2, vis = false },
+                raid4 = { name = "Cashmeowside", class = "ROGUE", race = "BloodElf", sex = 3, vis = true } }
+local inRaid = true
+local tradePartner = nil
+local myMoney, theirMoney = 0, 0
+function IsInRaid() return inRaid end
+function GetNumGroupMembers() local n = 0 for _ in pairs(group) do n = n + 1 end return n end
+function UnitExists(u) return u == "player" or group[u] ~= nil end
+function UnitIsPlayer(u) return UnitExists(u) end
+function UnitIsVisible(u) return u == "player" or (group[u] and group[u].vis) or false end
+function UnitIsConnected(u) return not (group[u] and group[u].offline) end
+function UnitName(u)
+  if u == "player" then return me end
+  if u == "NPC" then return tradePartner end
+  return group[u] and group[u].name
+end
+function UnitClass(u) local g = group[u]; if u == "player" then g = group.raid1 end return g and g.class, g and g.class end
+function UnitRace(u) local g = group[u]; if u == "player" then g = group.raid1 end return g and g.race, g and g.race end
+function UnitSex(u) local g = group[u]; if u == "player" then g = group.raid1 end return g and g.sex or 2 end
+function Ambiguate(n) return (n:gsub("%-Dreamscythe$", "")) end
+local myGuild = "The Heathens"
+local guildies = { Kumlust = true, Gnomerpills = true, Kumsecration = true }
+function GetGuildInfo(unit) return myGuild end
+function UnitIsInMyGuild(unit) local n = UnitName(unit); return n ~= nil and guildies[n] == true end
+function GetTime() return _G.__now or 1000 end
+function time() return 1788500000 end
+function GetServerTime() return 1788500000 end
+function IsShiftKeyDown() return false end
+local inCombat = false
+function InCombatLockdown() return inCombat end
+function GetCursorPosition() return 0, 0 end
+function GetMoney() return 5000 * 10000 end
+local whispers = {}
+function SendChatMessage(text, kind, _, target)
+  if kind == "WHISPER" then whispers[#whispers + 1] = tostring(target) .. ": " .. text
+  else said[#said + 1] = kind .. ": " .. text end
+end
+function RandomRoll(lo, hi) rolled[#rolled + 1] = { lo, hi } end
+local played, soundsWork, kitsWork = {}, true, false
+function PlaySoundFile(path, channel) played[#played + 1] = path; return soundsWork end
+function PlaySound(kit, channel) played[#played + 1] = "kit:" .. tostring(kit); return kitsWork end
+local function heard(pattern)
+  for i = #played, 1, -1 do if played[i]:find(pattern) then return played[i] end end
+end
+function InitiateTrade(unit) _G.__initiated = unit; tradePartner = UnitName(unit) end
+function SetTradeMoney(c) myMoney = c end
+function MoneyInputFrame_SetCopper(f, c) f.copper = c end
+function MoneyInputFrame_GetCopper(f) return f.copper or 0 end
+-- the real client throws "forbidden object" if an addon writes these
+for _, sfx in ipairs({ "Gold", "Silver", "Copper" }) do
+  local box = newFrame("EditBox", "TradePlayerInputMoneyFrame" .. sfx)
+  box.SetText = function() error("forbidden object: an addon wrote a secure money box") end
+end
+function GetPlayerTradeMoney() return myMoney end
+function GetTargetTradeMoney() return theirMoney end
+local picked = nil
+function PickupPlayerMoney(c) picked = c end
+-- open a trade for real: the window AND the event, the way the client does it
+local function openTrade(who)
+  tradePartner = who; myMoney = 0; TradePlayerInputMoneyFrame.copper = 0
+  TradeFrame.shown = true
+end
+C_Timer = { After = function(s, fn) timers[#timers + 1] = { delay = s or 0, fn = fn } end }
+local addon = {}
+C_ChatInfo = { RegisterAddonMessagePrefix = function() end, SendAddonMessage = function(prefix, msg, ch) addon[#addon + 1] = msg end }
+function SetPortraitTexture(tex, unit) tex.portrait = unit end
+CLASS_ICON_TCOORDS = { SHAMAN = { 0, 0.25, 0.25, 0.5 }, MAGE = { 0.25, 0.5, 0, 0.25 } }
+function Frame:SetTexture(t) self.tex = t end
+function Frame:SetColorTexture(r, g, b, a)
+  if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" then
+    error("SetColorTexture needs colorR, colorG, colorB [, colorA]")
+  end
+  self.color = { r, g, b, a }
+end
+function Frame:SetFrameLevel(l) self.level = l end
+function Frame:GetFrameLevel() return self.level or 1 end
+-- runTimers() fires everything; runTimers(n) only fires timers set for <= n
+-- seconds, so a long countdown can be left ticking while short ones drain.
+local function runTimers(maxDelay)
+  maxDelay = maxDelay or math.huge
+  for _ = 1, 200 do
+    local due, keep = {}, {}
+    for _, t in ipairs(timers) do
+      if t.delay <= maxDelay then due[#due + 1] = t else keep[#keep + 1] = t end
+    end
+    if #due == 0 then break end
+    timers = keep
+    for _, t in ipairs(due) do t.fn() end
+  end
+end
+tinsert = table.insert
+STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
+if not GetAddOnMetadata then function GetAddOnMetadata() return "1.1.0-rc3" end end
+function pcall_(f, ...) return pcall(f, ...) end
+
+---------------------------------------------------------------- load
+local chunk = assert(loadfile("BiSGamba.lua"))
+chunk("BiSGamba")
+local G = BiSGamba
+local ev
+for _, name in ipairs({ "BiSGambaFrame" }) do end
+-- find the event frame: the last CreateFrame("Frame") with an OnEvent script
+-- simpler: the addon registered ADDON_LOADED on it; scan _G isn't possible for anonymous frames,
+-- so capture via CreateFrame hook next time. Instead: re-create by hooking.
+-- We hooked nothing, so grab it through the closure: BiSGamba doesn't expose it. Patch: expose.
+ev = G._ev
+assert(ev, "addon must expose its event frame as BiSGamba._ev for the harness")
+local function fire(event, ...) ev.scripts.OnEvent(ev, event, ...) end
+local function from(sender, ...) fire("CHAT_MSG_ADDON", "BiSGamba", table.concat({ ... }, "\t"), "RAID", sender .. "-Dreamscythe") end
+local function saidHas(pattern)
+  for i = #said, 1, -1 do if said[i]:find(pattern) then return said[i] end end
+end
+
+-- a save from before dbver existed at all: every migration still has to run
+BiSGambaDB = { stats = { Oldtimer = 250 }, view = "table", autoJoin = true, wager = 100 }
+fire("ADDON_LOADED", "BiSGamba")
+fire("PLAYER_LOGIN")
+check(type(BiSGambaDB.stats.Oldtimer) == "table" and BiSGambaDB.stats.Oldtimer.net == 250,
+  "old net-only stats survive the upgrade")
+check(BiSGambaDB.base.Oldtimer and BiSGambaDB.base.Oldtimer.net == 250,
+  "and are carried over as the base the rounds build on")
+check(BiSGambaDB.view == "2d", "the dead table view is migrated away")
+check(BiSGambaDB.autoJoin == false, "autojoin migrated off")
+check(BiSGambaDB.dbver == 6, "stamped with the current version")
+check(BiSGambaDB.soundChannel == "SFX", "the cues moved off the master channel")
+BiSGambaDB.stats = {}
+-- nothing the addon defines should leak into _G
+for _, name in ipairs({ "Stat", "PutMoney", "TradeMoneyNow", "nudged", "seated", "Trade", "Game", "UI" }) do
+  check(_G[name] == nil, "no global named " .. name)
+end
+check(BiSGambaDB and BiSGambaDB.wager == 100 and BiSGambaDB.view == "2d", "defaults (2d view)")
+check(ev.events.CHAT_MSG_SYSTEM and ev.events.TRADE_SHOW and ev.events.CHAT_MSG_RAID, "events registered")
+
+-- roll pattern
+local who, r, lo, hi = G.ParseRoll("Gnomerpills rolls 57 (1-100)")
+check(who == "Gnomerpills" and r == 57 and lo == 1 and hi == 100, "parse roll " .. tostring(G.ROLL_PATTERN))
+check(G.ParseRoll("Gnomerpills-Dreamscythe rolls 5 (1-200)") == "Gnomerpills", "parse roll with realm")
+check(G.ParseRoll("You have learned a new spell.") == nil, "non-roll ignored")
+
+---------------------------------------------------------------- round 1: plain high/low
+SlashCmdList.BISGAMBA("start 200")
+check(G.Game.state == "JOIN" and G.Game.max == 200, "table open /200")
+check(said[#said]:find("HIGH / LOW") and said[#said]:find("/roll 200") and said[#said]:find("up to 199g")
+  and said[#said]:find("1 to join"), "the opening line names the game, the range and the stakes: " .. said[#said])
+check(G.UI.frame.shown, "window shown")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills-Dreamscythe")
+fire("CHAT_MSG_RAID", " 1 ", "Kumsecration")
+fire("CHAT_MSG_RAID", "lol", "Cashmeowside")
+check(#G.Game.order == 3, "three seated (me + 2): " .. #G.Game.order)
+fire("CHAT_MSG_RAID", "-1", "Kumsecration")
+check(#G.Game.order == 2, "leave works")
+fire("CHAT_MSG_RAID", "1", "Kumsecration")
+fire("CHAT_MSG_RAID", "+1", "Cashmeowside"); check(G.Game.players.Cashmeowside ~= nil, "+1 joins")
+fire("CHAT_MSG_RAID", "out", "Cashmeowside"); check(G.Game.players.Cashmeowside == nil, "out leaves")
+fire("CHAT_MSG_RAID", "in", "Cashmeowside"); check(G.Game.players.Cashmeowside ~= nil, "in joins")
+G.UI.startBtn.scripts.OnClick()
+check(G.Game.state == "ROLL", "rolling")
+-- a roll in the wrong range is ignored, and the person is told once in chat
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 99 (1-100)")
+check(G.Game.players.Kumlust.roll == nil, "wrong range ignored")
+check(said[#said]:find("rolled /roll 100 · table is /roll 200"), "wrong range nudge: " .. said[#said])
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 98 (1-100)")
+check(not said[#said]:find("rolls 98") and select(2, said[#said]:gsub("rolled /roll", "")) == 1, "nudged only once")
+SlashCmdList.BISGAMBA("nudge")
+check(said[#said]:find("waiting on") and said[#said]:find("Gnomerpills"), "nudge names stragglers: " .. said[#said])
+G.UI.rollBtn.scripts.OnClick()
+check(rolled[#rolled][1] == 1 and rolled[#rolled][2] == 200, "roll button rolls 1-200")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 150 (1-200)")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 3 (1-200)")
+check(G.Game.players.Kumlust.roll == 150, "first roll counts")
+check(said[#said]:find("already rolled 150 · first roll counts"), "re-roller told: " .. said[#said])
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 200 (1-200)")
+check(G.Game.players.Kumlust.roll == 150 and select(2, said[#said]:gsub("already rolled", "")) == 1 and not said[#said]:find("200 ·"), "told once, still 150")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 20 (1-200)")
+fire("CHAT_MSG_SYSTEM", "Cashmeowside rolls 180 (1-200)")
+-- somebody who never joined cannot buy in once the rolls are out, by any route
+fire("CHAT_MSG_SYSTEM", "Winterpup rolls 190 (1-200)")
+check(G.Game.players.Winterpup == nil, "a bystander's roll is ignored")
+SlashCmdList.BISGAMBA("autojoin")
+fire("CHAT_MSG_SYSTEM", "Winterpup rolls 190 (1-200)")
+check(G.Game.players.Winterpup == nil, "not even with autojoin on - the table is shut")
+SlashCmdList.BISGAMBA("autojoin")
+fire("CHAT_MSG_RAID", "1", "Winterpup")
+check(G.Game.players.Winterpup == nil, "and typing 1 does not get them in")
+check(saidHas("the rolls are already out"), "they are told why: " .. tostring(saidHas("already out")))
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 77 (1-200)")
+check(G.Game.state == "ROLL", "grace period holds")
+runTimers()
+check(G.Game.state == "DONE", "settled after grace")
+local res = G.Game.result
+check(res and res.winner == "Cashmeowside" and res.loser == "Gnomerpills" and res.amount == 160, "high 180 low 20 -> 160g")
+check(said[#said]:find("Gnomerpills owes Cashmeowside 160g"), "result announced: " .. said[#said])
+check(#BiSGambaDB.debts == 1 and BiSGambaDB.debts[1].amount == 160, "ledger has the debt")
+runTimers()
+local function sent(op) for _, m in ipairs(addon) do if m:find("^" .. op) then return m end end end
+check(sent("OPEN\t200") and sent("JOIN\tGnomerpills") and sent("GO") and sent("ROLL\tCashmeowside\t180") and sent("DONE\tCashmeowside\tGnomerpills\t160\t180\t20"), "host broadcast the round")
+-- emotes
+local function seatAnim(name)
+  for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == name then return s.model.anim, s.model.model end end
+end
+check(seatAnim("Cashmeowside") == 68, "winner cheers")
+check(seatAnim("Gnomerpills") == 77, "loser cries")
+local a = seatAnim("Kumlust")
+check(a == 70 or a == 80 or a == 82 or a == 69, "second place smug: " .. tostring(a))
+a = seatAnim("Kumsecration")
+check(a == 75 or a == 79 or a == 83 or a == 60 or a == 67 or a == 65, "third of four sweats: " .. tostring(a))
+SlashCmdList.BISGAMBA("view 3d"); G.UI:Refresh()
+local _, model = seatAnim("Kumsecration")
+check(model == "npc:5595", "out of range dwarf uses the guard: " .. tostring(model))
+_, model = seatAnim("Gnomerpills")
+check(model == "unit:raid2", "in range uses SetUnit: " .. tostring(model))
+SlashCmdList.BISGAMBA("view 2d"); G.UI:Refresh()
+-- rest timer puts them back to standing
+_G.__now = 1020
+G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+check(seatAnim("Cashmeowside") == 0, "back to standing")
+
+---------------------------------------------------------------- round 2: ties
+SlashCmdList.BISGAMBA("start")
+check(G.Game.max == 200, "wager remembered")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); fire("CHAT_MSG_RAID", "1", "Cashmeowside")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 100 (1-200)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 100 (1-200)")
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 5 (1-200)")
+fire("CHAT_MSG_SYSTEM", "Cashmeowside rolls 5 (1-200)")
+runTimers()
+check(G.Game.state == "TIE" and G.Game.tieKind == "high", "high tie first")
+check(G.Game.tied.Kumlust and G.Game.tied.Gnomerpills and not G.Game.tied.Kumsecration, "right people tied")
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 199 (1-200)")   -- not in the tiebreak
+check(G.Game.players.Kumsecration.tieRoll == nil, "outsider tie roll ignored")
+G.UI.rollBtn.scripts.OnClick()
+check(rolled[#rolled][2] == 200, "tie roll uses the same range")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 150 (1-200)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 30 (1-200)")
+check(G.Game.state == "TIE" and G.Game.tieKind == "low", "then the low tie")
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 10 (1-200)")
+fire("CHAT_MSG_SYSTEM", "Cashmeowside rolls 90 (1-200)")
+check(G.Game.state == "DONE", "settled after both ties")
+res = G.Game.result
+check(res.winner == "Kumlust" and res.loser == "Kumsecration" and res.amount == 95, "amount uses the original rolls (100-5)")
+
+---------------------------------------------------------------- stale highName regression
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Cashmeowside")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 10 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 10 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Cashmeowside rolls 90 (1-100)")
+runTimers()
+check(G.Game.state == "TIE" and G.Game.tieKind == "low", "low tie only")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 50 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 2 (1-100)")
+check(G.Game.result and G.Game.result.winner == "Cashmeowside" and G.Game.result.loser == "Gnomerpills" and G.Game.result.amount == 80, "low tie pays this round's high")
+for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then end end
+
+---------------------------------------------------------------- the window says it in English
+G.UI:Show()
+G.UI:ToggleDebts(); G.UI:Refresh()
+local rows = {}
+for _, r in ipairs(G.UI.rows) do if r.shown and r.text.text_ then rows[#rows + 1] = strip(r.text.text_) end end
+local mineRow
+for _, t in ipairs(rows) do if t:find("^you ") then mineRow = t end end
+check(mineRow == nil or mineRow:find("^you owe "), "no \"you owes\": " .. tostring(mineRow))
+for _, t in ipairs(rows) do
+  check(not t:find("you owes") and not t:find("^%u%a+ owe "), "debt row reads right: " .. t)
+end
+G.UI:ToggleDebts()
+
+---------------------------------------------------------------- everybody on the same number rerolls
+SlashCmdList.BISGAMBA("reset")
+addon = {}
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 7 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 7 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 7 (1-100)")
+runTimers()
+check(G.Game.state == "ROLL", "an all-square round goes back to rolling, not DONE")
+check(G.Game.players.Kumlust.roll == nil and G.Game.players.Gnomerpills.roll == nil, "everyone's roll is cleared")
+check(saidHas("everybody rolled 7 · everyone reroll /roll 100"), "and it says so: " .. tostring(saidHas("reroll")))
+check(sent("REDO"), "clients told to reroll")
+check(G.Game.result == nil, "no result was booked")
+-- and the rerolled numbers settle it normally
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 80 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 30 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 55 (1-100)")
+runTimers()
+check(G.Game.state == "DONE" and G.Game.result.winner == "Kumlust" and G.Game.result.loser == "Gnomerpills"
+  and G.Game.result.amount == 50, "the reroll decides it")
+-- a client hearing REDO clears its own copy
+SlashCmdList.BISGAMBA("reset")
+from("Gnomerpills", "OPEN", "100")
+from("Gnomerpills", "JOIN", "Gnomerpills"); from("Gnomerpills", "JOIN", "Kumlust")
+from("Gnomerpills", "GO")
+from("Gnomerpills", "ROLL", "Kumlust", "7"); from("Gnomerpills", "ROLL", "Gnomerpills", "7")
+from("Gnomerpills", "REDO")
+check(G.Game.state == "ROLL" and G.Game.players.Kumlust.roll == nil, "the client cleared its rolls too")
+check(G.Game.CanRoll(), "and can roll again")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- ledger netting
+local owes0, owed0 = G.Ledger.Net("Kumlust")
+G.Ledger.Add("Kumlust", "Gnomerpills", 50)
+G.Ledger.Add("Gnomerpills", "Kumlust", 80)
+local owes, owed = G.Ledger.Net("Kumlust")
+check(owes == owes0 and owed == owed0 + 30, "netting: 80 against 50 leaves 30 owed to us")
+G.Ledger.Add("Kumlust", "Cashmeowside", 40)
+owes = G.Ledger.Net("Kumlust")
+check(owes == 40, "owes cash 40")
+
+---------------------------------------------------------------- pay: trade flow
+_G.__initiated = nil
+G.Trade.Pay()
+check(G.Trade.pending and G.Trade.pending.to == "Cashmeowside", "pay picks who I owe")
+runTimers()
+check(_G.__initiated == "raid4", "InitiateTrade after the delay: " .. tostring(_G.__initiated))
+TradeFrame.shown = true
+fire("TRADE_SHOW")
+runTimers()
+check(myMoney == 40 * 10000, "40g put in the trade: " .. myMoney)
+fire("TRADE_ACCEPT_UPDATE", 1, 1)
+TradeFrame.shown = false
+fire("TRADE_CLOSED"); fire("TRADE_CLOSED")
+fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+check(G.Ledger.Net("Kumlust") == 0, "debt cleared after the trade")
+check(chat[#chat]:find("square"), "paid message: " .. lastChat())
+-- a requested but not yet accepted trade must never be filled
+G.Ledger.Add("Kumlust", "Cashmeowside", 32)
+openTrade("Cashmeowside")
+G.UI:Show(); G.UI:Refresh()
+check(strip(G.UI.payBtn.text.text_) ~= "put 32g in", "no fill offered before they accept")
+G.Trade.Pay(); runTimers()
+check(myMoney == 0, "nothing goes in a trade that is only requested")
+check(chat[#chat]:find("goes in as soon as they accept") or chat[#chat]:find("asking"), "says it is waiting: " .. lastChat())
+fire("TRADE_SHOW"); runTimers()
+G.UI:Refresh()
+check(strip(G.UI.payBtn.text.text_) == "put 32g in", "pay button offers to fill once live: " .. strip(G.UI.payBtn.text.text_))
+G.UI.payBtn.scripts.OnClick()
+runTimers()
+check(myMoney == 32 * 10000, "second press put 32g in the trade")
+check(G.Trade.live, "trade is live")
+fire("TRADE_ACCEPT_UPDATE", 1, 1); TradeFrame.shown = false; fire("TRADE_CLOSED"); fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+runTimers()
+-- name read from the trade frame when UnitName("NPC") comes back empty
+TradeFrameRecipientNameText = newFrame("FontString", "TradeFrameRecipientNameText")
+TradeFrameRecipientNameText.text_ = "Cashmeowside-Dreamscythe"
+G.Ledger.Add("Kumlust", "Cashmeowside", 7)
+openTrade("Cashmeowside"); tradePartner = nil
+fire("TRADE_SHOW"); runTimers()
+G.Trade.Pay()
+runTimers()
+check(myMoney == 7 * 10000, "partner read off the trade frame")
+TradeFrame.shown = false; fire("TRADE_CLOSED"); TradeFrameRecipientNameText = nil
+G.Ledger.Clear("Kumlust", "Cashmeowside")
+G.Trade.pending = nil
+runTimers()
+
+-- a client that refuses SetTradeMoney too: show the number, never claim success
+local realSet, realCopper = SetTradeMoney, MoneyInputFrame_SetCopper
+G.Ledger.Add("Kumlust", "Cashmeowside", 9)
+openTrade("Cashmeowside")
+SetTradeMoney = function() end                       -- Blizzard blocks both
+MoneyInputFrame_SetCopper = function() end
+fire("TRADE_SHOW"); runTimers()
+G.Trade.Pay(); runTimers()
+check(chat[#chat]:find("Ctrl%+C"), "points at the copy box: " .. lastChat())
+check(G.Trade.panel and G.Trade.panel.shown, "falls back to the panel")
+check(G.Trade.panel.amount.text_ == "9", "copy box holds the bare number: " .. tostring(G.Trade.panel.amount.text_))
+check(G.Trade.panel.amount.text_:match("^%d+$"), "nothing in it but digits, so it pastes clean")
+-- editing it snaps back: it is a display, not an input
+G.Trade.panel.amount:SetText("garbage")
+G.Trade.panel.amount.scripts.OnEditFocusLost(G.Trade.panel.amount)
+check(G.Trade.panel.amount.text_ == "9", "edits snap back")
+check(picked == nil, "never calls the protected PickupPlayerMoney")
+SetTradeMoney, MoneyInputFrame_SetCopper = realSet, realCopper
+TradeFrame.shown = false; fire("TRADE_CLOSED"); G.Trade.pending = nil
+G.Ledger.Clear("Kumlust", "Cashmeowside"); runTimers()
+
+SlashCmdList.BISGAMBA("tradedebug")
+
+-- they open the trade themselves: the panel shows the balance and it fills
+G.Ledger.Add("Kumlust", "Cashmeowside", 25)
+openTrade("Cashmeowside")
+fire("TRADE_SHOW"); runTimers()
+check(G.Trade.panel and G.Trade.panel.shown, "panel up beside the trade window")
+runTimers()
+check(whispers[#whispers] and whispers[#whispers]:find("I owe you 25g"), "whispers somebody with no addon: " .. tostring(whispers[#whispers]))
+G.Trade.Pay(); runTimers()
+check(myMoney == 25 * 10000, "fills 25g when the client allows it")
+check(chat[#chat]:find("put 25g in the trade"), "only claims success after reading it back: " .. lastChat())
+fire("TRADE_ACCEPT_UPDATE", 1, 1); TradeFrame.shown = false; fire("TRADE_CLOSED"); fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+check(G.Ledger.Net("Kumlust") == 0, "settled from the button")
+-- somebody pays me
+tradePartner = "Gnomerpills"; myMoney = 0; theirMoney = 20 * 10000
+TradeFrame.shown = true
+fire("TRADE_SHOW"); fire("TRADE_MONEY_CHANGED"); fire("TRADE_ACCEPT_UPDATE", 1, 1)
+TradeFrame.shown = false
+fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+local _, owed2 = G.Ledger.Net("Kumlust")
+check(owed2 == owed - 20, "partial payment recorded: " .. owed2)
+
+---------------------------------------------------------------- the table shuts when the rolls are called
+SlashCmdList.BISGAMBA("reset")
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills")
+check(#G.Game.order == 2, "two seated while it is open")
+check(not G.UI.joinBtn.off, "and the join button works")
+SlashCmdList.BISGAMBA("go")
+-- from here nobody gets in or out
+check(G.UI.joinBtn.off, "join is shut once the rolls are called")
+fire("CHAT_MSG_RAID", "1", "Kumsecration")
+check(G.Game.players.Kumsecration == nil, "a latecomer cannot join")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 3 (1-100)")
+fire("CHAT_MSG_RAID", "1", "Kumsecration")
+check(G.Game.players.Kumsecration == nil, "and still cannot after seeing somebody roll low")
+-- nor can somebody who is in duck out of a losing round
+fire("CHAT_MSG_RAID", "-1", "Gnomerpills")
+check(G.Game.players.Gnomerpills ~= nil, "and nobody can walk out of a round they are losing")
+G.Game.JoinMe()
+check(chat[#chat]:find("rolls are already out"), "the button says so too: " .. lastChat())
+check(G.Game.Seated(), "we are still in")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 80 (1-100)")
+runTimers()
+check(G.Game.result and G.Game.result.winner == "Kumlust" and G.Game.result.loser == "Gnomerpills",
+  "and the round settles between the two who were actually in it")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- refusing to roll is a forfeit, not an escape
+SlashCmdList.BISGAMBA("reset")
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 60 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 80 (1-100)")
+-- Kumsecration never rolls; host ends
+SlashCmdList.BISGAMBA("end")
+check(G.Game.state == "DONE", "settled on end")
+check(G.Game.result.winner == "Gnomerpills" and G.Game.result.loser == "Kumsecration",
+  "the one who never rolled pays, not the low roller: " .. tostring(G.Game.result.loser))
+check(saidHas("never rolled · forfeit") ~= nil, "and it is announced")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- a host who vanishes frees the table
+SlashCmdList.BISGAMBA("reset")
+from("Gnomerpills", "OPEN", "100")
+check(G.Game.Remote() and G.Game.host == "Gnomerpills", "on a remote table")
+group.raid2.offline = true
+fire("GROUP_ROSTER_UPDATE")
+check(G.Game.state == "IDLE" and G.Game.host == nil, "a disconnected host's table is let go")
+group.raid2.offline = nil
+-- and we can host after
+SlashCmdList.BISGAMBA("start 100")
+check(G.Game.IsHost(), "and we can open our own")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- crafted messages are refused
+SlashCmdList.BISGAMBA("reset")
+BiSGambaDB.debts = {}
+-- a stranger who opens a table then declares a result cannot write a debt
+from("Gnomerpills", "OPEN", "100")
+from("Gnomerpills", "DONE", "Gnomerpills", "Kumlust", "999", "100", "1")
+check(#BiSGambaDB.debts == 0, "a DONE with rolls we never saw is refused")
+check(chat[#chat]:find("does not match the rolls we saw"), "and flagged: " .. lastChat())
+-- a DONE whose amount does not follow from the rolls is refused
+SlashCmdList.BISGAMBA("reset"); BiSGambaDB.debts = {}
+from("Gnomerpills", "OPEN", "100")
+from("Gnomerpills", "JOIN", "Gnomerpills"); from("Gnomerpills", "JOIN", "Kumlust")
+from("Gnomerpills", "GO")
+from("Gnomerpills", "ROLL", "Kumlust", "90"); from("Gnomerpills", "ROLL", "Gnomerpills", "20")
+from("Gnomerpills", "DONE", "Kumlust", "Gnomerpills", "500", "90", "20")   -- should be 70
+check(#BiSGambaDB.debts == 0, "a DONE with a wrong amount is refused")
+from("Gnomerpills", "DONE", "Kumlust", "Gnomerpills", "70", "90", "20")    -- correct
+check(#BiSGambaDB.debts == 1 and BiSGambaDB.debts[1].amount == 70, "the honest result is booked")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- last call
+SlashCmdList.BISGAMBA("reset")
+_G.__now = 2000
+SlashCmdList.BISGAMBA("start 100")
+check(G.Game.state == "JOIN" and G.Game.IsHost(), "table open")
+check(G.UI.rollBtn.off, "roll greyed while the table is only open")
+local rollsBefore = #rolled
+G.UI.rollBtn.scripts.OnClick()
+G.Game.RollMe()
+check(#rolled == rollsBefore, "the roll button never starts the game")
+check(chat[#chat]:find("rolls haven't been called yet"), "and says why: " .. lastChat())
+check(G.Game.state == "JOIN", "still just open")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills")
+-- last call
+G.UI.callBtn.scripts.OnClick()
+check(said[#said]:find("last call · 10s") and said[#said]:find("/roll 100"), "last call announced: " .. said[#said])
+check(G.Game.Countdown() ~= nil and G.Game.state == "JOIN", "counting down, table still open")
+runTimers(1)                       -- drain the comm queue, leave the countdown ticking
+check(sent("CALL\t10"), "clients told about the countdown")
+check(G.UI.rollBtn.off, "roll still greyed during the countdown")
+G.UI:Refresh()
+check(strip(G.UI.startBtn.text.text_) == "start now", "start button offers to skip: " .. strip(G.UI.startBtn.text.text_))
+check(G.UI.callBtn.off, "no second countdown")
+-- the host's own body counts it down
+_G.__now = 2004
+G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+local hostSeat
+for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then hostSeat = s_ end end
+check(hostSeat and strip(hostSeat.roll.text_) == "6", "host portrait shows 6: " .. tostring(hostSeat and strip(hostSeat.roll.text_)))
+_G.__now = 2008
+G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+check(strip(hostSeat.roll.text_) == "2" and hostSeat.model.anim == 64, "last seconds shout: " .. strip(hostSeat.roll.text_))
+-- it fires by itself when the ten seconds are up
+_G.__now = 2010
+check(G.Game.state == "JOIN", "still open until the clock runs out")
+runTimers()
+check(G.Game.state == "ROLL" and G.Game.Countdown() == nil, "countdown starts the rolls")
+check(not G.UI.rollBtn.off and G.UI.rollBtn.hot, "roll lit once rolls are called")
+-- and "start now" skips it
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills")
+SlashCmdList.BISGAMBA("call")
+runTimers(1)
+check(G.Game.Countdown() ~= nil, "counting again")
+G.UI.startBtn.scripts.OnClick()
+check(G.Game.state == "ROLL" and G.Game.Countdown() == nil, "start now skips the countdown")
+runTimers()
+check(G.Game.state == "ROLL", "the expiring timer does not re-fire")
+
+---------------------------------------------------------------- the host can sit out
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(G.Game.Seated(), "host is seated by default")
+G.UI.joinBtn.scripts.OnClick()
+check(not G.Game.Seated() and G.Game.IsHost() and G.Game.state == "JOIN", "host backed out but still runs the table")
+check(strip(G.UI.joinBtn.text.text_) == "join", "button flipped back to join")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+SlashCmdList.BISGAMBA("go")
+check(said[#said]:find("rolls open") and said[#said]:find("HIGH / LOW") and said[#said]:find("/roll 100 now"),
+  "the go line says the rolls are open and what the game is: " .. said[#said])
+check(G.Game.state == "ROLL" and G.Game.players.Kumlust == nil, "rolls called without the host at the table")
+check(G.UI.rollBtn.off, "host who sat out cannot roll")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 80 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 20 (1-100)")
+runTimers()
+check(G.Game.result and G.Game.result.winner == "Gnomerpills" and G.Game.result.loser == "Kumsecration", "the host still settled it")
+G.UI.joinBtn.scripts.OnClick()
+SlashCmdList.BISGAMBA("reset")
+_G.__now = 1000
+
+---------------------------------------------------------------- client mode: Gnomerpills hosts
+SlashCmdList.BISGAMBA("reset")
+addon = {}
+local function gnomeOwesMe() for _, d in ipairs(BiSGambaDB.debts) do if d.from == "Gnomerpills" and d.to == "Kumlust" then return d.amount end end return 0 end
+local base = gnomeOwesMe()
+from("Gnomerpills", "OPEN", "150")
+check(G.Game.state == "JOIN" and G.Game.host == "Gnomerpills" and G.Game.max == 150 and not G.Game.IsHost(), "joined a remote table")
+-- one layout for everybody: the host's controls are greyed, never hidden
+check(G.UI.joinBtn.shown and G.UI.startBtn.shown and G.UI.callBtn.shown and G.UI.endBtn.shown,
+  "every button is on screen for a player too")
+check(G.UI.startBtn.off and G.UI.callBtn.off and G.UI.endBtn.off, "but the host's are greyed")
+G.UI.startBtn.scripts.OnClick(); G.UI.endBtn.scripts.OnClick()
+check(G.Game.host == "Gnomerpills" and G.Game.state == "JOIN", "and a greyed button does nothing")
+check(G.UI.rollBtn.off, "roll greyed before GO")
+from("Gnomerpills", "JOIN", "Gnomerpills")
+G.UI.joinBtn.scripts.OnClick()
+check(said[#said] == "RAID: 1", "join types 1: " .. said[#said])
+from("Gnomerpills", "JOIN", "Kumlust")
+check(G.Game.Seated() and G.UI.joinBtn.text.text_ == "leave", "seated -> button says leave")
+G.UI.joinBtn.scripts.OnClick()
+check(said[#said] == "RAID: -1", "leave types -1")
+from("Gnomerpills", "LEAVE", "Kumlust"); from("Gnomerpills", "JOIN", "Kumlust")
+-- a stranger's OPEN doesn't hijack
+from("Cashmeowside", "OPEN", "999")
+check(G.Game.host == "Gnomerpills", "second host ignored? host=" .. tostring(G.Game.host))
+SlashCmdList.BISGAMBA("start 50")
+check(G.Game.host == "Gnomerpills" and G.Game.max == 150, "can't start over a remote table")
+from("Gnomerpills", "GO")
+check(G.Game.state == "ROLL" and not G.UI.rollBtn.off and G.UI.rollBtn.hot, "roll lit after GO")
+local before = #rolled
+G.UI.rollBtn.scripts.OnClick()
+check(#rolled == before + 1 and rolled[#rolled][2] == 150, "client rolls 1-150")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 77 (1-150)")   -- clients ignore chat, the host tells them
+check(G.Game.players.Kumlust.roll == nil, "client doesn't read rolls itself")
+from("Gnomerpills", "ROLL", "Kumlust", "77")
+check(G.Game.players.Kumlust.roll == 77 and G.UI.rollBtn.off, "roll from host; button greyed after rolling")
+from("Gnomerpills", "ROLL", "Gnomerpills", "12")
+from("Gnomerpills", "TIE", "high"); from("Gnomerpills", "TIED", "Kumlust"); from("Gnomerpills", "TIED", "Gnomerpills")
+check(G.Game.state == "TIE" and G.Game.tied.Kumlust and G.Game.CanRoll() and not G.UI.rollBtn.off, "client tiebreak: roll lit again")
+from("Gnomerpills", "ROLL", "Kumlust", "40", "T")
+check(G.Game.players.Kumlust.tieRoll == 40 and G.UI.rollBtn.off, "tie roll taken")
+from("Gnomerpills", "ROLL", "Kumlust", "40", "T")   -- replayed: no re-emote
+from("Gnomerpills", "DONE", "Kumlust", "Gnomerpills", "65", "77", "12")
+check(G.Game.state == "DONE" and G.Game.result.amount == 65, "DONE applied")
+check(gnomeOwesMe() == base + 65, "client ledger booked the debt: " .. gnomeOwesMe())
+from("Gnomerpills", "PAID", "Gnomerpills", "Kumlust", "65")   -- the DEBTOR's word: worthless
+check(gnomeOwesMe() == base + 65, "a debtor cannot clear their own debt with PAID")
+-- but a third party hears it from the creditor. Us: watch Kumsecration owe Gnomerpills, cleared by Gnomerpills.
+G.Ledger.Clear("Kumsecration", "Gnomerpills"); G.Ledger.Clear("Gnomerpills", "Kumsecration")
+G.Ledger.Add("Kumsecration", "Gnomerpills", 40)
+from("Kumsecration", "PAID", "Kumsecration", "Gnomerpills", "40")   -- not the creditor: ignored
+local function pairAmt(a,b) for _, d in ipairs(BiSGambaDB.debts) do if d.from==a and d.to==b then return d.amount end end return 0 end
+check(pairAmt("Kumsecration","Gnomerpills") == 40, "and neither can a debtor for someone else")
+from("Gnomerpills", "PAID", "Kumsecration", "Gnomerpills", "40")    -- the creditor: honoured
+check(pairAmt("Kumsecration","Gnomerpills") == 0, "the creditor's PAID clears it")
+from("Gnomerpills", "CLOSE")
+check(G.Game.state == "DONE", "CLOSE after DONE leaves the result up")
+-- HI from a client while hosting -> replay
+SlashCmdList.BISGAMBA("start 60")
+check(G.Game.IsHost(), "hosting again after remote table ended")
+fire("CHAT_MSG_RAID", "1", "Kumsecration")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 30 (1-60)")
+addon = {}
+from("Cashmeowside", "HI")
+runTimers()
+check(sent("OPEN\t60") and sent("JOIN\tKumsecration") and sent("GO") and sent("ROLL\tKumlust\t30"), "HI replays the table")
+-- views
+for _, v in ipairs({ "2d", "3d" }) do SlashCmdList.BISGAMBA("view " .. v); G.UI:Refresh(); check(BiSGambaDB.view == v, "view " .. v) end
+SlashCmdList.BISGAMBA("view table"); check(BiSGambaDB.view ~= "table", "no table view any more")
+SlashCmdList.BISGAMBA("view 2d"); SlashCmdList.BISGAMBA("view"); check(BiSGambaDB.view == "3d", "cycle 2d->3d")
+SlashCmdList.BISGAMBA("view"); check(BiSGambaDB.view == "2d", "cycle 3d->2d")
+-- the window must be exactly the same size in both views
+local function frameSize() G.UI:Refresh(); return G.UI.frame.w, G.UI.frame.h end
+SlashCmdList.BISGAMBA("view 2d"); local w2, h2 = frameSize()
+SlashCmdList.BISGAMBA("view 3d"); local w3, h3 = frameSize()
+check(w2 == w3 and h2 == h3, ("views never resize the window: %sx%s vs %sx%s"):format(w2, h2, w3, h3))
+-- popup off: a remote OPEN no longer shows the window
+SlashCmdList.BISGAMBA("reset"); G.UI.frame:Hide()
+G.UI.autoOpen.checked = false; G.UI.autoOpen.scripts.OnClick(G.UI.autoOpen)
+from("Gnomerpills", "OPEN", "70")
+check(BiSGambaDB.autoOpen == false and not G.UI.frame.shown and G.Game.host == "Gnomerpills", "popup off: table synced but window stays closed")
+SlashCmdList.BISGAMBA("popup"); check(BiSGambaDB.autoOpen == true, "popup toggled back")
+from("Gnomerpills", "CLOSE"); G.UI:Show()
+SlashCmdList.BISGAMBA("start 60"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); SlashCmdList.BISGAMBA("go"); fire("CHAT_MSG_SYSTEM", "Kumlust rolls 30 (1-60)")
+SlashCmdList.BISGAMBA("view 2d"); G.UI:Refresh()
+local s2 = nil; for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then s2 = s_ end end
+check(s2 and s2.portrait.shown and not s2.model.shown and s2.portrait.portrait == "player", "2d uses the live portrait")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- no whisper between addon users
+TradeFrame.shown = false; fire("TRADE_CLOSED"); G.Trade.pending = nil; runTimers()
+local before = #whispers
+G.Ledger.Add("Kumlust", "Gnomerpills", 15)
+openTrade("Gnomerpills")
+fire("TRADE_SHOW"); runTimers()
+check(G.Comm.HasAddon("Gnomerpills"), "Gnomerpills is a known addon user (we heard their comms)")
+check(#whispers == before, "no whisper to someone running the addon")
+check(G.Trade.panel.shown, "panel still shows for an addon user")
+-- the panel shows the balance with THIS partner, whichever way it points
+local pair = 0
+for _, d in ipairs(BiSGambaDB.debts) do
+  if (d.from == "Kumlust" and d.to == "Gnomerpills") or (d.from == "Gnomerpills" and d.to == "Kumlust") then pair = d.amount end
+end
+check(tonumber(G.Trade.panel.amount.text_) == pair and pair > 0,
+  "panel shows the balance with this partner: " .. tostring(G.Trade.panel.amount.text_) .. " vs " .. pair)
+-- somebody we have never heard from gets the whisper, unless they answer the ping
+TradeFrame.shown = false; fire("TRADE_CLOSED"); runTimers()
+BiSGambaDB.users["Cashmeowside"] = nil
+G.Ledger.Add("Kumlust", "Cashmeowside", 11)
+openTrade("Cashmeowside")
+fire("TRADE_SHOW")
+from("Cashmeowside", "PONG")                       -- they do have it after all
+runTimers()
+check(#whispers == before, "a PONG cancels the whisper")
+check(G.Comm.HasAddon("Cashmeowside"), "and they are remembered")
+TradeFrame.shown = false; fire("TRADE_CLOSED"); runTimers()
+G.Ledger.Clear("Kumlust", "Gnomerpills"); G.Ledger.Clear("Kumlust", "Cashmeowside")
+SlashCmdList.BISGAMBA("users")
+
+---------------------------------------------------------------- the PAYER clears their own debt (regression guard)
+-- the real client zeroes the money frames the instant the trade closes, so the
+-- payer's settle must survive on the peak seen during the trade, not a post-close read.
+G.Trade.pending = nil; TradeFrame.shown = false; fire("TRADE_CLOSED"); runTimers()
+G.Ledger.Clear("Kumlust", "Cashmeowside"); G.Ledger.Clear("Cashmeowside", "Kumlust")
+G.Ledger.Add("Kumlust", "Cashmeowside", 67)      -- we owe them
+openTrade("Cashmeowside")
+fire("TRADE_SHOW"); runTimers()
+myMoney = 67 * 10000                              -- we paste 67g in
+G.Trade.ticker.scripts.OnUpdate(G.Trade.ticker, 0.3)   -- ticker sees it
+fire("TRADE_ACCEPT_UPDATE", 1, 1)                -- both accept
+myMoney = 0                                      -- client zeroes the frame as the trade closes
+TradeFrame.shown = false
+fire("TRADE_CLOSED")                             -- no ERR_TRADE_COMPLETE at all
+runTimers()
+local function owe(a,b) for _, d in ipairs(BiSGambaDB.debts) do if d.from==a and d.to==b then return d.amount end end return 0 end
+check(owe("Kumlust","Cashmeowside") == 0, "the payer's own debt clears even when the frame zeroes at close: " .. owe("Kumlust","Cashmeowside"))
+check(chat[#chat]:find("paid Cashmeowside 67g"), "and it says so on the payer's side: " .. lastChat())
+G.Ledger.Clear("Kumlust","Cashmeowside"); myMoney = 0; G.Trade.pending = nil; runTimers()
+-- harder: no clean 1,1 ever seen (client raced it), only ERR_TRADE_COMPLETE with the frame already zeroed
+G.Ledger.Add("Kumlust", "Cashmeowside", 40)
+openTrade("Cashmeowside")
+fire("TRADE_SHOW"); runTimers()
+myMoney = 40 * 10000
+G.Trade.ticker.scripts.OnUpdate(G.Trade.ticker, 0.3)   -- ticker sees the 40 (peak)
+myMoney = 0                                            -- frame reads 0 at the accept event and after
+fire("TRADE_ACCEPT_UPDATE", 1, 1)                      -- accept, but the read is already 0
+myMoney = 0
+TradeFrame.shown = false
+fire("TRADE_CLOSED")                                   -- close zeroes everything
+runTimers()
+check(owe("Kumlust","Cashmeowside") == 0, "clears on the peak when the accept read was 0: " .. owe("Kumlust","Cashmeowside"))
+G.Ledger.Clear("Kumlust","Cashmeowside"); myMoney = 0; G.Trade.pending = nil; TradeFrame.shown=false; fire("TRADE_CLOSED"); runTimers()
+
+---------------------------------------------------------------- accept, un-accept, cancel: nothing moves
+G.Trade.pending = nil; TradeFrame.shown = false; fire("TRADE_CLOSED"); runTimers()
+G.Ledger.Add("Kumlust", "Cashmeowside", 300)
+local owed300 = 0
+for _, d in ipairs(BiSGambaDB.debts) do if d.from=="Kumlust" and d.to=="Cashmeowside" then owed300 = d.amount end end
+openTrade("Cashmeowside")
+fire("TRADE_SHOW"); runTimers()
+myMoney = 100 * 10000
+fire("TRADE_ACCEPT_UPDATE", 1, 1)      -- both green with 100 on the table
+fire("TRADE_ACCEPT_UPDATE", 0, 0)      -- someone un-accepts (dragged an item in)
+TradeFrame.shown = false
+fire("TRADE_CLOSED")
+runTimers()
+local still = 0
+for _, d in ipairs(BiSGambaDB.debts) do if d.from=="Kumlust" and d.to=="Cashmeowside" then still = d.amount end end
+check(still == owed300, "a trade that was un-accepted before closing settles nothing: " .. still)
+-- and one that stays accepted books exactly the accepted amount, not a peak
+openTrade("Cashmeowside")
+fire("TRADE_SHOW"); runTimers()
+myMoney = 200 * 10000; G.Trade.ticker.scripts.OnUpdate(G.Trade.ticker, 0.3)   -- 200 flashed through
+myMoney = 100 * 10000
+fire("TRADE_ACCEPT_UPDATE", 1, 1)      -- both accept with 100 actually on the table
+TradeFrame.shown = false; fire("TRADE_CLOSED"); runTimers()
+local now = 0
+for _, d in ipairs(BiSGambaDB.debts) do if d.from=="Kumlust" and d.to=="Cashmeowside" then now = d.amount end end
+check(now == owed300 - 100, "the accepted amount is what settles, not the peak: " .. now)
+G.Ledger.Clear("Kumlust", "Cashmeowside"); myMoney = 0; G.Trade.pending = nil; runTimers()
+
+---------------------------------------------------------------- a trade that completes with no "trade complete" message
+G.Trade.pending = nil; TradeFrame.shown = false; fire("TRADE_CLOSED"); runTimers()
+G.Ledger.Add("Kumlust", "Cashmeowside", 12)
+local owedBefore = select(1, G.Ledger.Net("Kumlust"))
+openTrade("Cashmeowside")
+fire("TRADE_SHOW"); runTimers()
+-- the user types the gold themselves and the client fires no money event at all
+myMoney = 12 * 10000
+G.Trade.ticker.scripts.OnUpdate(G.Trade.ticker, 0.3)
+fire("TRADE_ACCEPT_UPDATE", 1, 1)
+TradeFrame.shown = false
+fire("TRADE_CLOSED")                              -- and no UI_INFO_MESSAGE ever comes
+runTimers()
+check(select(1, G.Ledger.Net("Kumlust")) == owedBefore - 12, "settles on both-accepted + close, with no complete message")
+check(chat[#chat]:find("paid Cashmeowside 12g"), "and says so: " .. lastChat())
+
+-- a trade nobody accepted must not settle
+G.Ledger.Add("Kumlust", "Cashmeowside", 20)
+local owed2 = select(1, G.Ledger.Net("Kumlust"))
+openTrade("Cashmeowside")
+fire("TRADE_SHOW"); runTimers()
+myMoney = 20 * 10000
+G.Trade.ticker.scripts.OnUpdate(G.Trade.ticker, 0.3)
+fire("TRADE_ACCEPT_UPDATE", 1, 0)                 -- only one side green
+TradeFrame.shown = false
+fire("TRADE_CLOSED"); runTimers()
+check(select(1, G.Ledger.Net("Kumlust")) == owed2, "a cancelled trade changes nothing")
+G.Ledger.Clear("Kumlust", "Cashmeowside")
+myMoney = 0; G.Trade.pending = nil; runTimers()
+
+---------------------------------------------------------------- taking over the next table
+SlashCmdList.BISGAMBA("reset")
+from("Gnomerpills", "OPEN", "80")
+from("Gnomerpills", "JOIN", "Gnomerpills"); from("Gnomerpills", "JOIN", "Kumlust")
+check(not G.Game.IsHost() and G.Game.host == "Gnomerpills", "they host")
+local hostSeat
+for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Gnomerpills" then hostSeat = s_ end end
+check(hostSeat and hostSeat.crown.shown, "and wear the crown")
+-- a running table can't be stolen
+SlashCmdList.BISGAMBA("start 100")
+check(G.Game.host == "Gnomerpills", "can't take over a table mid-game")
+-- once theirs finishes, anyone can open the next one
+from("Gnomerpills", "GO")
+from("Gnomerpills", "ROLL", "Gnomerpills", "50"); from("Gnomerpills", "ROLL", "Kumlust", "10")
+from("Gnomerpills", "DONE", "Gnomerpills", "Kumlust", "40", "50", "10")
+check(G.Game.state == "DONE", "their round finished")
+SlashCmdList.BISGAMBA("start 100")
+check(G.Game.IsHost() and G.Game.host == "Kumlust" and G.Game.state == "JOIN", "we host the next one")
+check(not G.UI.startBtn.off and not G.UI.callBtn.off, "and the controls come alive")
+G.UI:Refresh()
+for _, s_ in ipairs(G.UI.seats) do
+  if s_.person and s_.person.name == "Kumlust" then check(s_.crown.shown, "the crown moved to us") end
+  if s_.person and s_.person.name == "Gnomerpills" then check(not s_.crown.shown, "and left them") end
+end
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- the round ledger reconciles
+SlashCmdList.BISGAMBA("reset")
+BiSGambaDB.rounds, BiSGambaDB.base, BiSGambaDB.stats, BiSGambaDB.seq = {}, {}, {}, 0
+G.Rebuild()
+-- rounds we saw, played among guildies
+G.AddRound("Kumlust:1", { at = 100, max = 100, winner = "Kumlust", loser = "Gnomerpills", amount = 30, host = "Kumlust", g = "The Heathens" })
+G.AddRound("Kumlust:2", { at = 200, max = 100, winner = "Gnomerpills", loser = "Kumlust", amount = 10, host = "Kumlust", g = "The Heathens" })
+check(G.Stat("Kumlust").net == 20 and G.Stat("Kumlust").wins == 1 and G.Stat("Kumlust").losses == 1, "board derived from the rounds")
+-- the same round again changes nothing, however it arrives
+check(G.AddRound("Kumlust:1", { at = 100, max = 100, winner = "Kumlust", loser = "Gnomerpills", amount = 30, g = "The Heathens" }) == false, "a repeat is ignored")
+check(G.Stat("Kumlust").net == 20, "and the board does not move")
+-- somebody who was there for a round we missed
+addon = {}
+from("Gnomerpills", "IDS", "Kumlust:1", "Gnomerpills:7", "Kumlust:2")
+runTimers()
+check(sent("NEED\tGnomerpills:7"), "we ask only for the one we lack: " .. tostring(sent("NEED")))
+from("Gnomerpills", "ROUND", "Gnomerpills:7|300|100|Gnomerpills|Kumsecration|45|Gnomerpills|The Heathens")
+check(G.Stat("Gnomerpills").net == 25 and G.Stat("Gnomerpills").games == 3 and G.Stat("Kumsecration").net == -45, "the missing round is folded in")
+check(chat[#chat]:find("picked up 1 round"), "and it says so: " .. lastChat())
+-- asked for ours, we hand them over
+addon = {}
+from("Kumsecration", "SYNC")
+runTimers()
+check(sent("IDS"), "we answer a sync with our ids")
+addon = {}
+from("Kumsecration", "NEED", "Kumlust:2")
+runTimers()
+local r = sent("ROUND")
+check(r and r:find("Kumlust:2|") and r:find("|Gnomerpills|Kumlust|10|"), "and post the round itself: " .. tostring(r))
+check(r and r:find("The Heathens"), "with the guild it was played in")
+-- an unsolicited round we never asked for is ignored: no poisoning our ledger
+local kNet = G.Stat("Kumlust").net
+from("Gnomerpills", "ROUND", "Kumlust:1|100|100|Gnomerpills|Kumlust|999|Kumlust|The Heathens")
+check(G.Stat("Kumlust").net == kNet, "an unsolicited round is ignored - the ledger is not poisoned")
+check(BiSGambaDB.rounds["Kumlust:1"].amount == 30, "and the real round is untouched")
+-- a real round stamps an id and broadcasts it
+addon = {}
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 90 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 40 (1-100)")
+runTimers()
+local done = sent("DONE")
+check(done and done:find("Kumlust:3"), "the settled round carries its id: " .. tostring(done))
+check(BiSGambaDB.rounds["Kumlust:3"], "and lands in the ledger")
+-- a pug round must not touch the guild board
+G.AddRound("Kumlust:9", { at = 400, max = 100, winner = "Kumlust", loser = "Randomdude", amount = 1000, host = "Kumlust" })
+check(G.Stat("Randomdude").games == 0, "a pug round is off the guild board")
+local guildNet = G.Stat("Kumlust").net
+SlashCmdList.BISGAMBA("scope all")
+check(G.Stat("Randomdude").net == -1000 and G.Stat("Kumlust").net == guildNet + 1000, "but it is there under everyone")
+SlashCmdList.BISGAMBA("scope guild")
+check(G.Stat("Randomdude").games == 0 and G.Stat("Kumlust").net == guildNet, "and back off again")
+-- a settled round among guildies is stamped with the guild
+addon = {}
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 90 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 40 (1-100)")
+runTimers()
+local done2 = sent("DONE")
+check(done2 and done2:find("The Heathens"), "the DONE carries the guild: " .. tostring(done2))
+SlashCmdList.BISGAMBA("rounds")
+-- wiping needs to be meant
+SlashCmdList.BISGAMBA("wipestats")
+check(next(BiSGambaDB.rounds) ~= nil and chat[#chat]:find("wipe theirs too"), "wipestats spells out the options: " .. lastChat())
+SlashCmdList.BISGAMBA("wipestats yes")
+check(next(BiSGambaDB.rounds) == nil and next(BiSGambaDB.stats) == nil and BiSGambaDB.seq == 0, "and then wipes everything")
+check(#G.Board() == 0, "board is empty")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- adopting a fuller ledger
+SlashCmdList.BISGAMBA("reset")
+BiSGambaDB.rounds, BiSGambaDB.base, BiSGambaDB.stats, BiSGambaDB.seq = {}, {}, {}, 0
+G.Rebuild()
+G.AddRound("Kumlust:1", { at = 10, max = 100, winner = "Kumlust", loser = "Gnomerpills", amount = 5, host = "Kumlust", g = "The Heathens" })
+G.UI:Show(); if not G.UI.boardPanel.shown then G.UI:ToggleBoard() end
+check(not G.UI.adoptBtn.shown, "no adopt button when nobody has more than us")
+-- somebody answers a sync with a bigger ledger
+from("Gnomerpills", "SIZE", "42")
+G.UI:Refresh()
+local who, n = G.BestLedger()
+check(who == "Gnomerpills" and n == 42, "we notice who holds the most")
+check(G.UI.adoptBtn.shown, "and the button appears")
+-- adopting asks first, and does not touch anything until the whole thing lands
+popup = nil; addon = {}
+G.UI.adoptBtn.scripts.OnClick()
+check(popup and popup.text:find("Replace your BiS Gamba ledger with Gnomerpills"), "it asks: " .. tostring(popup and popup.text))
+check(BiSGambaDB.rounds["Kumlust:1"], "nothing gone yet")
+acceptPopup(); runTimers(1)
+check(sent("GIVEALL"), "we ask them for the lot")
+check(BiSGambaDB.rounds["Kumlust:1"], "and still keep ours while it is in flight")
+-- a transfer that stops halfway must not destroy what we have
+from("Gnomerpills", "ALL", "Gnomerpills:1|20|100|Gnomerpills|Kumsecration|11|Gnomerpills|The Heathens")
+from("Gnomerpills", "ALLEND", "9")
+check(BiSGambaDB.rounds["Kumlust:1"], "a short transfer is refused")
+check(chat[#chat]:find("keeping yours"), "and says why: " .. lastChat())
+-- a complete one replaces ours
+G.UI.adoptBtn.scripts.OnClick(); acceptPopup(); runTimers(1)
+from("Gnomerpills", "ALL",
+  "Gnomerpills:1|20|100|Gnomerpills|Kumsecration|11|Gnomerpills|The Heathens",
+  "Gnomerpills:2|30|100|Kumsecration|Gnomerpills|4|Gnomerpills|The Heathens")
+from("Gnomerpills", "ALLEND", "2")
+check(BiSGambaDB.rounds["Kumlust:1"] == nil, "ours is gone")
+check(BiSGambaDB.rounds["Gnomerpills:1"] and BiSGambaDB.rounds["Gnomerpills:2"], "theirs is in")
+check(G.Stat("Gnomerpills").net == 11 - 4 and G.Stat("Kumsecration").net == 4 - 11, "board rebuilt from theirs")
+check(chat[#chat]:find("adopted Gnomerpills's ledger %- 2 rounds"), "and it says so: " .. lastChat())
+-- and we hand ours over when asked
+addon = {}
+from("Kumsecration", "GIVEALL")
+runTimers(1)
+local all = sent("ALL")
+check(all and all:find("Gnomerpills:1|"), "we send our whole ledger on request: " .. tostring(all))
+check(sent("ALLEND\t2"), "with a count to check against")
+G.UI:ToggleBoard()
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- wiping the board for everyone
+SlashCmdList.BISGAMBA("reset")
+BiSGambaDB.rounds, BiSGambaDB.base, BiSGambaDB.stats, BiSGambaDB.seq = {}, {}, {}, 0
+G.AddRound("Kumlust:1", { at = 100, max = 100, winner = "Kumlust", loser = "Gnomerpills", amount = 30, host = "Kumlust", g = "The Heathens" })
+check(G.Stat("Kumlust").net == 30, "a round on the books")
+-- the button asks before it does anything
+popup = nil; addon = {}
+G.UI:ToggleBoard()
+G.UI.wipeBtn.scripts.OnClick()
+check(popup ~= nil and popup.text:find("for everyone"), "reset all asks first")
+check(G.Stat("Kumlust").net == 30, "and nothing is gone yet")
+acceptPopup(); runTimers()
+check(next(BiSGambaDB.rounds) == nil and #G.Board() == 0, "then it wipes ours")
+check(sent("WIPE"), "and tells everyone else")
+-- on the other end it is a request, not an order
+G.AddRound("Gnomerpills:2", { at = 100, max = 100, winner = "Gnomerpills", loser = "Kumlust", amount = 40, host = "Gnomerpills", g = "The Heathens" })
+popup = nil
+from("Gnomerpills", "WIPE")
+check(popup ~= nil and popup.text:find("Gnomerpills is resetting"), "a wipe from someone else asks: " .. tostring(popup and popup.text))
+check(next(BiSGambaDB.rounds) ~= nil, "and changes nothing until it is accepted")
+acceptPopup()
+check(next(BiSGambaDB.rounds) == nil, "accepting wipes ours too")
+-- debts are not a scoreboard: they survive
+G.Ledger.Clear("Kumlust", "Gnomerpills"); G.Ledger.Clear("Gnomerpills", "Kumlust")
+G.Ledger.Add("Kumlust", "Gnomerpills", 60)
+from("Gnomerpills", "WIPE"); acceptPopup()
+check(select(1, G.Ledger.Net("Kumlust")) == 60, "a wipe leaves debts alone")
+G.Ledger.Clear("Kumlust", "Gnomerpills")
+G.UI:ToggleBoard()
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- leaderboard, crown and effects
+SlashCmdList.BISGAMBA("reset")
+BiSGambaDB.stats, BiSGambaDB.rounds = {}, {}
+BiSGambaDB.base = {
+  Kumlust = { net = 500, wins = 5, losses = 1, games = 6, best = 0, worst = 0 },
+  Gnomerpills = { net = -300, wins = 1, losses = 4, games = 5, best = 0, worst = 0 },
+  Kumsecration = { net = 20, wins = 1, losses = 0, games = 1, best = 0, worst = 0 },
+}
+G.Rebuild()
+local board = G.Board()
+check(#board == 3 and board[1].name == "Kumlust" and board[3].name == "Gnomerpills", "board sorts by net")
+SlashCmdList.BISGAMBA("board")
+check(chat[#chat]:find("#3  Gnomerpills  %-300g  %(1%-4%)"), "board prints: " .. lastChat())
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+G.UI:ToggleBoard()
+check(G.UI.boardPanel.shown and G.UI.boardRows[1].shown, "leaderboard panel opens")
+check(strip(G.UI.boardRows[1].name.text_):find("Kumlust"), "top of the board: " .. strip(G.UI.boardRows[1].name.text_))
+check(strip(G.UI.boardRows[1].net.text_) == "+500g", "and their net: " .. strip(G.UI.boardRows[1].net.text_))
+check(strip(G.UI.boardRows[1].name.text_):find("host"), "the host is marked")
+-- the effects
+local function seatOf(name) for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == name then return s_ end end end
+check(seatOf("Kumlust").aura.shown, "biggest winner gets the gold aura")
+-- the 2D tile is opaque, so the winner needs a glow in front of it too
+SlashCmdList.BISGAMBA("view 2d"); G.UI:Refresh()
+check(seatOf("Kumlust").gild.shown, "2d winner is gilded in front as well")
+check(seatOf("Gnomerpills").flames[1].shown, "2d loser still burns")
+SlashCmdList.BISGAMBA("view 3d"); G.UI:Refresh()
+check(not seatOf("Kumlust").gild.shown, "3d needs no front glow - the model is see-through")
+check(seatOf("Kumlust").aura.shown, "but the halo stays")
+check(not seatOf("Gnomerpills").aura.shown and not seatOf("Kumsecration").aura.shown, "nobody else does")
+check(seatOf("Gnomerpills").flames[1].shown and seatOf("Gnomerpills").flames[3].shown, "biggest loser is on fire")
+check(not seatOf("Kumlust").flames[1].shown, "the winner is not")
+check(seatOf("Kumlust").crown.shown and not seatOf("Gnomerpills").crown.shown, "the host wears the crown")
+-- both panels open at once: the board sits under the debts
+G.UI:ToggleDebts()
+check(G.UI.debtPanel.shown and G.UI.boardPanel.shown, "debts and board both open")
+G.UI:ToggleDebts()
+-- a played round writes the record
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 90 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 70 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Kumsecration rolls 10 (1-100)")
+runTimers()
+check(G.Stat("Kumlust").net == 580 and G.Stat("Kumlust").wins == 6 and G.Stat("Kumlust").games == 7, "winner's record grew")
+check(G.Stat("Kumsecration").net == -60 and G.Stat("Kumsecration").losses == 1, "loser's record grew")
+check(G.Stat("Kumlust").best == 80, "best win remembered")
+check(G.Stat("Kumsecration").worst == 80, "worst loss remembered")
+check(G.Stat("Gnomerpills").games == 5, "the middle roller's record is untouched")
+G.UI:ToggleBoard()
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- never open anything
+SlashCmdList.BISGAMBA("reset")
+G.UI:Show()
+check(G.UI.frame.shown and G.UI.soundCheck.shown and G.UI.neverOpen.shown, "all three footer switches are there")
+-- the sound box mirrors the setting
+BiSGambaDB.sound = false; G.UI:Refresh()
+check(G.UI.soundCheck.checked == false, "sound box follows the setting")
+G.UI.soundCheck.checked = true; G.UI.soundCheck.scripts.OnClick(G.UI.soundCheck)
+check(BiSGambaDB.sound == true, "and setting it turns sound back on")
+-- flip never-open on
+G.UI.neverOpen.checked = true; G.UI.neverOpen.scripts.OnClick(G.UI.neverOpen)
+check(BiSGambaDB.neverOpen == true, "never-open is on")
+check(G.UI.autoOpen.enabled == false, "and the auto-open box is greyed, having nothing to say")
+-- a table opening no longer brings the window up
+G.UI.frame:Hide()
+from("Gnomerpills", "OPEN", "90")
+check(not G.UI.frame.shown, "a new table does not open the window")
+check(G.Game.host == "Gnomerpills", "but we still know about it")
+check(chat[#chat]:find("/gamba to open the table"), "and are told how to look: " .. lastChat())
+-- nor does combat ending
+G.UI:Show()
+inCombat = true; fire("PLAYER_REGEN_DISABLED")
+inCombat = false; fire("PLAYER_REGEN_ENABLED")
+check(not G.UI.frame.shown, "and it does not come back after combat")
+-- nor do other people's pop-ups
+popup = nil
+from("Gnomerpills", "WIPE")
+check(popup == nil, "somebody else's reset does not pop up")
+check(chat[#chat]:find("wipestats yes"), "it tells you instead: " .. lastChat())
+-- but everything you click still works
+G.UI:Show()
+check(G.UI.frame.shown, "you can still open it yourself")
+G.UI.neverOpen.checked = false; G.UI.neverOpen.scripts.OnClick(G.UI.neverOpen)
+check(BiSGambaDB.neverOpen == false and G.UI.autoOpen.enabled == true, "and turning it off gives auto-open back")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- the sound cues
+SlashCmdList.BISGAMBA("reset")
+G.UI:Show()
+_G.__now = 5000
+played = {}
+SlashCmdList.BISGAMBA("start 100")
+check(heard("SimonGame"), "opening a table plays something: " .. tostring(played[1]))
+check(BiSGambaDB.soundChannel == "SFX", "on the effects channel, alongside the rest of the game")
+SlashCmdList.BISGAMBA("sound master")
+check(BiSGambaDB.soundChannel == "Master", "and can be moved up if it gets lost")
+SlashCmdList.BISGAMBA("sound sfx")
+-- never the raid warning: that belongs to the raid leader
+for _, p in ipairs(played) do check(not p:lower():find("raidwarning"), "no raid warning: " .. p) end
+fire("CHAT_MSG_RAID", "1", "Gnomerpills")
+-- the countdown ticks: only 3 and 2 beep, earlier seconds are silent
+played = {}
+SlashCmdList.BISGAMBA("call")
+runTimers(1)
+check(heard("BellToll"), "last call rings a bell")
+played = {}
+_G.__now = 5004    -- 6 left
+G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+check(#played == 0, "six-to-four are silent: " .. tostring(played[#played]))
+played = {}
+_G.__now = 5007    -- 3 left
+G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+local tick3 = played[#played]
+played = {}
+_G.__now = 5008    -- 2 left
+G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+local tick2 = played[#played]
+check(tick3 and tick2, "three and two beep: " .. tostring(tick3) .. " then " .. tostring(tick2))
+played = {}
+_G.__now = 5009    -- 1 left
+G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+check(#played == 0, "one is silent, it stacks on the go: " .. tostring(played[#played]))
+-- your turn to roll
+played = {}
+_G.__now = 5010
+runTimers()
+check(G.Game.state == "ROLL", "rolling")
+check(heard("SimonGame"), "and it says so out loud")
+-- winning and losing are not the same tune
+played = {}
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 90 (1-100)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 10 (1-100)")
+runTimers()
+local won = heard("BellToll")
+check(won, "a win ends on a bell: " .. tostring(won))
+check(not heard("BadPress"), "and not on the losing sound")
+-- the same round from the other side
+SlashCmdList.BISGAMBA("reset")
+played = {}
+from("Gnomerpills", "OPEN", "100")
+from("Gnomerpills", "JOIN", "Gnomerpills"); from("Gnomerpills", "JOIN", "Kumlust")
+from("Gnomerpills", "GO")
+from("Gnomerpills", "ROLL", "Gnomerpills", "90"); from("Gnomerpills", "ROLL", "Kumlust", "10")
+from("Gnomerpills", "DONE", "Gnomerpills", "Kumlust", "80", "90", "10", "-")
+check(heard("BadPress") or heard("GongTroll"), "losing sounds like losing: " .. tostring(played[#played]))
+-- rc7 dedupe: at zero a seated roller hears only "your turn" (blue), never the
+-- group "go" (GameStart) stacked on top of it
+_G.__now = _G.__now + 5            -- clear of the repeat guard from the round above
+SlashCmdList.BISGAMBA("reset")
+from("Gnomerpills", "OPEN", "100")
+from("Gnomerpills", "JOIN", "Gnomerpills"); from("Gnomerpills", "JOIN", "Kumlust")
+G.UI.couldRoll = false            -- button starts dark, as it does out of JOIN in game
+played = {}
+from("Gnomerpills", "GO")
+check(not heard("GameStart") and heard("LargeBlueTree"),
+  "a roller hears your-turn, not go stacked on it: " .. tostring(played[1]))
+-- a host/watcher who is not seated is not rolling, so they DO hear "go"
+_G.__now = _G.__now + 5
+SlashCmdList.BISGAMBA("reset")
+from("Gnomerpills", "OPEN", "100")
+from("Gnomerpills", "JOIN", "Gnomerpills")   -- Kumlust stays out of this one
+played = {}
+from("Gnomerpills", "GO")
+check(heard("GameStart"), "a watcher still hears go: " .. tostring(played[1]))
+-- and it can all be turned off
+SlashCmdList.BISGAMBA("sound")
+check(BiSGambaDB.sound == false, "sounds off")
+played = {}
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(#played == 0, "and nothing plays")
+SlashCmdList.BISGAMBA("sound")
+check(BiSGambaDB.sound == true, "back on")
+
+-- a FojjiCore voice pack speaks the cues when that addon is around
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(not heard("FojjiCore"), "without FojjiCore the cues stay musical")
+_G.FojjiCore = {
+  voicePackOrder = { "Arabella", "Carla", "Chinese - Stacy" },
+  voicePacks = {
+    ["Arabella"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Arabella\\table.ogg",
+                     ["3"] = "Interface\\AddOns\\FojjiCore\\voice\\Arabella\\3.ogg",
+                     ["Safe"] = "Interface\\AddOns\\FojjiCore\\voice\\Arabella\\safe.ogg" },
+    ["Carla"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Carla\\table.ogg" },
+    ["Chinese - Stacy"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Stacy\\table.ogg" },
+  },
+}
+check(BiSGambaDB.voice == "auto", "voice is auto by default")
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(heard("Arabella\\table"), "auto picks our default pack once FojjiCore is loaded: " .. tostring(played[1]))
+check(not heard("SimonGame"), "and the motif stays quiet under her")
+played = {}; _G.__now = _G.__now + 1
+G.Sound.Play("tick3", 3)
+check(heard("Arabella\\3"), "the countdown uses her numbers")
+played = {}; _G.__now = _G.__now + 1
+G.Sound.Play("tick", 7)
+check(not heard("Arabella") and heard("SimonGame"), "a number she lacks falls back to the note: " .. tostring(played[1]))
+played = {}; _G.__now = _G.__now + 1
+G.Sound.Play("lose")
+check(heard("SimonGame") or heard("kit:"), "a cue with no line falls back to the motif")
+-- auto follows the voice the user already chose inside FojjiCore
+_G.FojjiCoreDB = { ttsVoiceType = "custom", ttsVoicePack = "Carla" }
+G.Sound.voice = {}
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(heard("Carla\\table"), "auto speaks in the user's FojjiCore pack: " .. tostring(played[1]))
+_G.FojjiCoreDB = nil
+G.Sound.voice = {}
+-- if a FojjiCore update drops our preferred pack, auto takes whatever is first
+do
+  local saved = _G.FojjiCore
+  _G.FojjiCore = {
+    voicePackOrder = { "Carla", "Chinese - Stacy" },
+    voicePacks = { ["Carla"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Carla\\table.ogg" },
+                   ["Chinese - Stacy"] = { ["Table"] = "x" } },
+  }
+  G.Sound.voice = {}
+  played = {}; _G.__now = _G.__now + 1
+  SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+  check(heard("Carla\\table"), "default gone: auto uses the first pack listed: " .. tostring(played[1]))
+  _G.FojjiCore = saved
+  G.Sound.voice = {}
+end
+-- pick another by a piece of its name, case-blind
+_G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("voice stacy")
+check(BiSGambaDB.voice == "Chinese - Stacy", "matched the pack by a piece of its name: " .. tostring(BiSGambaDB.voice))
+check(heard("Stacy\\table"), "and she says hello")
+-- a pack FojjiCore does not list is rebuilt by folder name
+SlashCmdList.BISGAMBA("voice Hank")
+played = {}; _G.__now = _G.__now + 1
+G.Sound.Play("win")
+check(heard("FojjiCore\\voice\\Hank\\safe.ogg"), "unknown packs go by folder + slug: " .. tostring(played[1]))
+-- a missing file is tried once, then left alone
+soundsWork = false
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("voice Brittney")     -- an unknown pack; says hello: the one try
+_G.__now = _G.__now + 1
+G.Sound.Play("open"); G.Sound.Play("open")
+_G.__now = _G.__now + 1
+G.Sound.Play("open")
+local tries = 0
+for _, p in ipairs(played) do if p:find("Brittney") then tries = tries + 1 end end
+check(tries == 1, "a line that will not play is tried once: " .. tries)
+soundsWork = true
+SlashCmdList.BISGAMBA("voice off")
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(not heard("Brittney") and heard("SimonGame"), "voice off: motifs again")
+SlashCmdList.BISGAMBA("voice auto")
+_G.FojjiCore = nil
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(not heard("Brittney"), "auto with FojjiCore gone: nothing spoken")
+-- a client that refuses the files says so once and stops trying
+soundsWork = false
+G.Sound.picked, G.Sound.last, G.Sound.warned = {}, {}, false
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(chat[#chat]:find("sound probe"), "a client with no sound is pointed at the probe: " .. lastChat())
+local tried = #played
+check(tried > 0, "it did go looking")
+G.Sound.last = {}
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(#played == 0, "and it stops hunting for a file that is not there: " .. tostring(played[1]))
+-- a client with no sound files but working kit ids still gets its cues
+soundsWork, kitsWork = false, true
+G.Sound.picked, G.Sound.last, G.Sound.warned = {}, {}, false
+played = {}; _G.__now = _G.__now + 1
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+check(heard("^kit:"), "falls back to sound kit ids, the way WeakAuras does: " .. tostring(heard("^kit:")))
+-- both extensions are tried before giving up on a file
+soundsWork, kitsWork = false, false
+G.Sound.picked, G.Sound.last = {}, {}
+played = {}; _G.__now = _G.__now + 1
+G.Sound.Play("tick")
+check(heard("%.ogg$") and heard("%.wav$"), "tries .ogg and .wav")
+-- once a file is found it is used exactly as found, not decorated again
+soundsWork = true
+G.Sound.picked, G.Sound.last = {}, {}
+played = {}; _G.__now = _G.__now + 1
+G.Sound.Play("tick"); G.Sound.last = {}; G.Sound.Play("tick")
+for _, pth in ipairs(played) do check(not pth:find("%.ogg%."), "no double extension: " .. pth) end
+check(#played == 2, "and the second time goes straight to it")
+soundsWork, kitsWork = true, false
+G.Sound.picked, G.Sound.last = {}, {}
+SlashCmdList.BISGAMBA("sound"); SlashCmdList.BISGAMBA("sound")
+SlashCmdList.BISGAMBA("reset")
+_G.__now = 1000
+
+---------------------------------------------------------------- the options window
+SlashCmdList.BISGAMBA("reset"); G.UI:Show()
+SlashCmdList.BISGAMBA("config")
+check(G.UI.Cfg.built and G.UI.Cfg.frame.shown, "options window opens")
+-- tabs switch
+G.UI:ShowConfigTab("Sound")
+check(G.UI.Cfg.tab == "Sound" and G.UI.Cfg.pages.Sound.shown and not G.UI.Cfg.pages.Table.shown, "tabs switch pages")
+-- a checkbox writes the setting
+BiSGambaDB.autoJoin = false
+G.UI:ConfigSet("autojoin", true)
+check(BiSGambaDB.autoJoin == true, "a checkbox writes db")
+check(G.UI:ConfigGet("autojoin") == true, "and reads it back")
+G.UI:ConfigSet("autojoin", false)
+check(BiSGambaDB.autoJoin == false, "and clears it")
+-- a slider writes the setting
+G.UI:ConfigSet("scale", 1.5)
+check(math.abs((BiSGambaDB.scale or 0) - 1.5) < 0.001, "a slider writes db: " .. tostring(BiSGambaDB.scale))
+G.UI:ConfigSet("wager", 250)
+check(BiSGambaDB.wager == 250, "the wager slider writes db")
+-- a segmented control writes the setting
+G.UI:ConfigSet("view", "3d")
+check(BiSGambaDB.view == "3d", "a segmented control writes db")
+G.UI:ConfigSet("scope", "all")
+check(BiSGambaDB.boardScope == "all", "scope segmented writes db")
+G.UI:ConfigSet("scope", "guild")
+-- every control id exists
+for _, id in ipairs({ "wager","flat","lastCall","grace","remind","autojoin","announce","scope","whisper","autocopy","wipemine","wipeall","sound","channel","soundtest","view","scale","portrait","minimap","combat","popup","neveropen" }) do
+  check(G.UI.Cfg.controls[id] ~= nil, "control exists: " .. id)
+end
+G.UI.Cfg.frame:Hide()
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- combat gets the window out of the way
+SlashCmdList.BISGAMBA("reset")
+G.UI:Show()
+check(G.UI.frame.shown, "window open")
+inCombat = true; fire("PLAYER_REGEN_DISABLED")
+check(not G.UI.frame.shown, "combat hides it")
+-- a table opening mid-fight must not drag it back on screen
+from("Gnomerpills", "OPEN", "70")
+check(not G.UI.frame.shown, "and a new table does not pop it up mid-fight")
+inCombat = false; fire("PLAYER_REGEN_ENABLED")
+check(G.UI.frame.shown, "it comes back when the fight ends")
+-- but only if it was up to begin with
+G.UI.frame:Hide()
+inCombat = true; fire("PLAYER_REGEN_DISABLED")
+inCombat = false; fire("PLAYER_REGEN_ENABLED")
+check(not G.UI.frame.shown, "a window you had closed stays closed")
+SlashCmdList.BISGAMBA("combat")
+check(BiSGambaDB.combat == false, "and it can be turned off")
+SlashCmdList.BISGAMBA("combat")
+SlashCmdList.BISGAMBA("reset"); G.UI:Show()
+
+---------------------------------------------------------------- slash + misc
+local owedMe = select(2, G.Ledger.Net("Kumlust"))
+local gnome = 0
+for _, d in ipairs(BiSGambaDB.debts) do if d.from == "Gnomerpills" and d.to == "Kumlust" then gnome = d.amount end end
+SlashCmdList.BISGAMBA("paid Gnomerpills Kumlust")
+check(select(2, G.Ledger.Net("Kumlust")) == owedMe - gnome, "manual paid")
+SlashCmdList.BISGAMBA("flat")
+check(BiSGambaDB.payDiff == false, "flat toggle")
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 250")
+check(said[#said]:find("250g flat"), "flat mode says the full wager: " .. said[#said])
+SlashCmdList.BISGAMBA("flat")
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 250")
+check(said[#said]:find("up to 249g"), "difference mode gives the worst case: " .. said[#said])
+SlashCmdList.BISGAMBA("flat")
+SlashCmdList.BISGAMBA("start 310")
+fire("CHAT_MSG_RAID", "1", "Gnomerpills")
+check(#G.Game.order == 2, "seated by chat only")
+SlashCmdList.BISGAMBA("go")
+fire("CHAT_MSG_SYSTEM", "Kumlust rolls 310 (1-310)")
+fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 1 (1-310)")
+SlashCmdList.BISGAMBA("end")   -- settle with two of four in
+check(G.Game.state == "DONE" and G.Game.result.amount == 310, "flat pays the full wager on end")
+SlashCmdList.BISGAMBA("debts")
+SlashCmdList.BISGAMBA("history")
+SlashCmdList.BISGAMBA("help")
+SlashCmdList.BISGAMBA("clear")
+check(#BiSGambaDB.debts == 0, "clear")
+G.UI:ToggleDebts()
+G.UI:Refresh()
+SlashCmdList.BISGAMBA("npc Troll 3 1234")
+check(BiSGambaDB.npc.Troll[3] == 1234, "npc override")
+G.UI:ToggleDebts()
+inRaid = false
+fire("GROUP_ROSTER_UPDATE")
+fire("CHAT_MSG_SYSTEM", "Nobody rolls 5 (1-310)")     -- stranger, not in group, after DONE
+SlashCmdList.BISGAMBA("reset")
+check(G.Game.state == "IDLE", "reset")
+
+print(("%d checks, %d failed"):format(pass + fail, fail))
+os.exit(fail == 0 and 0 or 1)
