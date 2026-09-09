@@ -175,13 +175,26 @@ local function runTimers(maxDelay)
 end
 tinsert = table.insert
 STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
-if not GetAddOnMetadata then function GetAddOnMetadata() return "1.1.0-rc3" end end
+-- a distinctive version so the "registers the TOC version, not a literal" assert
+-- can tell a dynamic read from a hardcoded string
+if not GetAddOnMetadata then function GetAddOnMetadata() return "9.9.9-toc" end end
+-- globals LibBiSComm can reach for (all guarded on its side); enough to boot and,
+-- if a test drives it, answer WHERE/SUM without erroring
+function IsInGroup() return inRaid end
+function UnitPosition() return 100, 200, 0, 1 end
+function IsInInstance() return false, "none" end
+function GetInstanceInfo() return "Azeroth", "none", 0, "", 0, 0, false, 0, 0 end
+function GetZoneText() return "Orgrimmar" end
+function GetRealZoneText() return "Orgrimmar" end
+function GetSummonConfirmSummoner() return "" end
+function hooksecurefunc() end
 function pcall_(f, ...) return pcall(f, ...) end
 
 ---------------------------------------------------------------- load
--- the TOC loads the embedded prompt first, then the addon - do the same, so the
--- real header console is under test, not BiSGamba's inline theme fallback.
+-- the TOC loads the embedded libs first, then the addon - do the same, so the
+-- real header console and the shared BiS channel are under test, not fallbacks.
 assert(loadfile("Libs/BiSTheme/Console.lua"))()
+assert(loadfile("Libs/LibBiSComm-1.0/LibBiSComm-1.0.lua"))()
 local chunk = assert(loadfile("BiSGamba.lua"))
 chunk("BiSGamba")
 local G = BiSGamba
@@ -1390,6 +1403,34 @@ SlashCmdList.BISGAMBA("go"); G.UI:Refresh()
 check(con.slots.phase and con.slots.phase.text:find("^roll:"), "who still owes a roll while rolling: " .. tostring(con.slots.phase and con.slots.phase.text))
 SlashCmdList.BISGAMBA("reset"); G.UI:Refresh()
 check(not con.slots.host and not con.slots.pot and not con.slots.phase, "idle clears the game slots, the name stays")
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- the shared BiS channel (LibBiSComm)
+local lib = _G.LibBiSComm
+check(lib ~= nil and lib.MINOR == 3, "LibBiSComm is embedded, minor 3: " .. tostring(lib and lib.MINOR))
+check(lib._booted, "it boots from PLAYER_LOGIN")
+check(lib.addons and lib.addons.BiSGamba == GetAddOnMetadata("BiSGamba", "Version"),
+  "the addon is registered with its TOC version, not a literal: " .. tostring(lib.addons and lib.addons.BiSGamba))
+check(G.PREFIX == nil, "and Gamba's own pipe is a separate prefix from the lib's BiS")
+-- the off switch lives in BiSGambaDB.comm; the lib obeys it, and it survives a logout
+lib:SetEnabled(true)
+BiSGambaDB.comm = false
+G.SharedComm.Boot()
+check(not lib:Enabled(), "BiSGambaDB.comm=false boots the channel silent and deaf")
+lib:SetEnabled(true)
+G.SharedComm.Save()
+check(BiSGambaDB.comm == true, "Save writes the live switch back for next login")
+-- NO Gamba feature may gate the channel. Flip each toggle and confirm the lib
+-- stays enabled; a gate would flip it off here (mutation-verified).
+lib:SetEnabled(true)
+local gatedBy = nil
+for _, cmd in ipairs({ "sound", "autojoin", "quiet", "whisper", "combat", "neveropen" }) do
+  SlashCmdList.BISGAMBA(cmd)
+  if not lib:Enabled() then gatedBy = cmd end
+  SlashCmdList.BISGAMBA(cmd)
+  lib:SetEnabled(true)              -- reset so one probe can't mask the next
+end
+check(gatedBy == nil, "no feature toggle touches the shared channel (gated by: " .. tostring(gatedBy) .. ")")
 SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- combat gets the window out of the way
