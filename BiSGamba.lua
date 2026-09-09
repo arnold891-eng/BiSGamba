@@ -3905,11 +3905,37 @@ SlashCmdList.BISGAMBA = Slash
 ----------------------------------------------------------------------------
 -- events
 ----------------------------------------------------------------------------
+--------------------------------------------------------------------------
+-- The shared BiS channel (Libs\LibBiSComm-1.0, embedded byte-identical from
+-- _bisdev). It is NOT a Gamba feature and no setting here may gate it: just
+-- carrying this addon makes the client answer WHERE and SUM for any BiS
+-- summoner in the raid - "one addon gets you half way". Only /bis off mutes it.
+-- Gamba's own BiSGamba pipe (PREFIX above) is a separate channel, untouched.
+-- The lib keeps no SavedVariables, so its off switch is remembered in
+-- BiSGambaDB.comm and restored next login.
+--------------------------------------------------------------------------
+local SharedComm = {}
+G.SharedComm = SharedComm
+
+function SharedComm.Boot()
+  local lib = _G.LibBiSComm
+  if not lib then return end
+  lib:RegisterAddon(ADDON, (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "dev")
+  if db and db.comm == false then lib:SetEnabled(false) end   -- restore the off switch
+  lib:Boot()
+end
+
+function SharedComm.Save()
+  local lib = _G.LibBiSComm
+  if lib and db then db.comm = lib:Enabled() and true or false end
+end
+
 local ev = CreateFrame("Frame")
 G._ev = ev
 local function Reg(e) pcall(ev.RegisterEvent, ev, e) end
 Reg("ADDON_LOADED")
 Reg("PLAYER_LOGIN")
+Reg("PLAYER_LOGOUT")
 
 local CHAT = { CHAT_MSG_RAID = true, CHAT_MSG_RAID_LEADER = true, CHAT_MSG_PARTY = true,
   CHAT_MSG_PARTY_LEADER = true, CHAT_MSG_SAY = true, CHAT_MSG_RAID_WARNING = true }
@@ -3923,6 +3949,7 @@ ev:SetScript("OnEvent", function(_, event, a1, a2, ...)
     if not db then InitDB() end
     Mini:Build()
     Comm.Register()
+    SharedComm.Boot()                -- the shared BiS channel, alongside our own pipe
     Reg("CHAT_MSG_ADDON")
     Reg("CHAT_MSG_SYSTEM")
     for e in pairs(CHAT) do Reg(e) end
@@ -3939,6 +3966,8 @@ ev:SetScript("OnEvent", function(_, event, a1, a2, ...)
     Game.OnChat(a1, a2)
   elseif event == "CHAT_MSG_ADDON" then
     if a1 == PREFIX then Game.OnComm(a2 or "", (select(2, ...))) end
+  elseif event == "PLAYER_LOGOUT" then
+    SharedComm.Save()                -- the lib has no SavedVariables; its switch is ours to keep
   elseif event == "PLAYER_REGEN_DISABLED" then
     UI:CombatHide()
   elseif event == "PLAYER_REGEN_ENABLED" then

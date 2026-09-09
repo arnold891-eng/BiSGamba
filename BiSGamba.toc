@@ -10,4 +10,5 @@
 ## X-License: MIT
 
 Libs\BiSTheme\Console.lua
+Libs\LibBiSComm-1.0\LibBiSComm-1.0.lua
 BiSGamba.lua
