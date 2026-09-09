@@ -38,6 +38,17 @@ function Frame:CreateFontString() return newFrame("FontString", nil, self) end
 function Frame:CreateAnimationGroup() return newFrame("AnimationGroup", nil, self) end
 function Frame:CreateAnimation() return newFrame("Animation", nil, self) end
 function Frame:SetShown(v) self.shown = v and true or false end
+-- FontString bits the BiS> console leans on. GetStringWidth strips colour escapes
+-- and scales by the recorded font size, so the header budget assert measures real
+-- glyphs, not |cff… codes, and an 8pt word is narrower than a 15pt one.
+function Frame:GetParent() return self.parent end
+function Frame:SetAlpha(a) self.alpha = a end
+function Frame:GetAlpha() return self.alpha or 1 end
+function Frame:SetFont(_, size) self.size = size end
+function Frame:GetStringWidth()
+  local t = tostring(self.text_ or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+  return #t * (self.size or 9) * 0.6
+end
 function Frame:SetEnabled(v) self.enabled = v and true or false end
 function Frame:SetChecked(v) self.checked = v and true or false end
 function Frame:GetChecked() return self.checked end
@@ -168,6 +179,9 @@ if not GetAddOnMetadata then function GetAddOnMetadata() return "1.1.0-rc3" end 
 function pcall_(f, ...) return pcall(f, ...) end
 
 ---------------------------------------------------------------- load
+-- the TOC loads the embedded prompt first, then the addon - do the same, so the
+-- real header console is under test, not BiSGamba's inline theme fallback.
+assert(loadfile("Libs/BiSTheme/Console.lua"))()
 local chunk = assert(loadfile("BiSGamba.lua"))
 chunk("BiSGamba")
 local G = BiSGamba
@@ -1330,6 +1344,52 @@ for _, id in ipairs({ "wager","flat","lastCall","grace","remind","autojoin","ann
   check(G.UI.Cfg.controls[id] ~= nil, "control exists: " .. id)
 end
 G.UI.Cfg.frame:Hide()
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- the BiS> header prompt
+SlashCmdList.BISGAMBA("reset"); G.UI:Show()
+local con = G.UI.con
+check(con ~= nil, "the header carries a BiS> console")
+check(G.UI.title:GetText() == G.T.text("accent", "BiS> "), "the title itself is the prompt: " .. tostring(G.UI.title:GetText()))
+local function conShown() return (tostring(con:Text()):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+-- drain any events the earlier game rounds queued, then let the fade settle
+_G.__now = 6000; con:Clear()
+for _ = 1, 6 do _G.__now = _G.__now + 4; con:Paint() end
+for _ = 1, 14 do _G.__now = _G.__now + 0.05; con:Paint() end
+check(conShown():find("Gamba", 1, true), "the addon name stands in the prompt: " .. conShown())
+-- a line change FADES (Arn: not hard cuts): strictly-between-0-and-1 frames, >=3.
+-- Step 0.05s at a time - a whole-second jump would skip the fade entirely.
+con:Say("Gnomer deals", "gold")
+local midFrames = 0
+for _ = 1, 14 do _G.__now = _G.__now + 0.05; con:Paint(); local a = con.words.alpha; if a > 0 and a < 1 then midFrames = midFrames + 1 end end
+check(midFrames >= 3, "words fade in and out, not a hard cut: mid-fade frames = " .. midFrames)
+_G.__now = _G.__now + 4; for _ = 1, 6 do _G.__now = _G.__now + 0.05; con:Paint() end   -- let it expire
+-- the header budget: a long event line is trimmed to width, colour escapes whole
+_G.__now = _G.__now + 1
+con:Say("Averyveryverylongwinner beat Anotherlongloser", "ink2")
+for _ = 1, 14 do _G.__now = _G.__now + 0.05; con:Paint() end
+check(con:Width() <= con.width, "a long line is trimmed to the header budget: " .. con:Width() .. " <= " .. con.width)
+check(select(2, con.words:GetText():gsub("|r", "")) == 1 and conShown():find("%.%.%."), "trimmed with an ellipsis, its colour escape whole")
+-- an event jumps in over the slots, holds, then the rotation resumes
+_G.__now = _G.__now + 5; con:Set("host", nil)
+for _ = 1, 10 do _G.__now = _G.__now + 0.05; con:Paint() end
+con:Say("Kum paid 80g", "good")
+for _ = 1, 10 do _G.__now = _G.__now + 0.05; con:Paint() end
+check(conShown():find("paid 80g", 1, true), "an event jumps into the prompt: " .. conShown())
+_G.__now = _G.__now + 4
+for _ = 1, 10 do _G.__now = _G.__now + 0.05; con:Paint() end
+check(conShown():find("Gamba", 1, true), "after the hold the slots resume: " .. conShown())
+-- the slots follow the game: seats while joining, who owes a roll while rolling
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+G.UI:Refresh()
+check(con.slots.host and con.slots.host.text == "your table", "your table shows in the header: " .. tostring(con.slots.host and con.slots.host.text))
+check(con.slots.pot and con.slots.pot.text == "/roll 100", "and the stakes: " .. tostring(con.slots.pot and con.slots.pot.text))
+check(con.slots.phase and con.slots.phase.text:find("in$"), "and the seat count while joining: " .. tostring(con.slots.phase and con.slots.phase.text))
+SlashCmdList.BISGAMBA("go"); G.UI:Refresh()
+check(con.slots.phase and con.slots.phase.text:find("^roll:"), "who still owes a roll while rolling: " .. tostring(con.slots.phase and con.slots.phase.text))
+SlashCmdList.BISGAMBA("reset"); G.UI:Refresh()
+check(not con.slots.host and not con.slots.pot and not con.slots.phase, "idle clears the game slots, the name stays")
 SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- combat gets the window out of the way
