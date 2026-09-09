@@ -21,9 +21,14 @@
 
 local ADDON = ...
 
--- BiS Theme: the shared palette when it's loaded, the same values inline otherwise.
-local T = BiSTheme
-if not T then
+-- BiS Theme: the shared palette when it's loaded, the same values inline
+-- otherwise. The embedded Libs\BiSTheme\Console.lua loads first and, with the
+-- BiSTheme addon absent, leaves a partial BiSTheme (rgb/rgba/text only for the
+-- prompt). So fill in whatever a real BiSTheme would also carry - skin, classRGB
+-- - without clobbering anything already there. With the real addon present this
+-- whole block is a no-op.
+local T = BiSTheme or {}
+do
   local hex = { bg="121020", surface="1a1730", sunken="221d3c", line="2a2446", line2="3a3260",
     ink="ece8f6", ink2="c6bedd", muted="968ead", accent="b980ff", accentSoft="2c2148",
     good="4fd0cf", warn="f08cb0", gold="e5c04a", slate="8fb4d6", dim="8e86a6" }
@@ -37,21 +42,20 @@ if not T then
     end
     return c[1], c[2], c[3]
   end
-  T = {
-    hex = hex, rgb = rgb,
-    rgba = function(n, a) local r, g, b = rgb(n); return r, g, b, (a or 1) end,
-    text = function(n, s) return "|cff" .. (hex[n] or hex.ink) .. tostring(s) .. "|r" end,
-    classRGB = function(tok)
-      local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[tok]
-      if c then return c.r, c.g, c.b end
-      return rgb("ink")
-    end,
-    skin = function(f, border)
-      if not f.SetBackdrop then return end
-      f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-      f:SetBackdropColor(rgb("surface")); f:SetBackdropBorderColor(rgb(border or "line2"))
-    end,
-  }
+  T.hex = T.hex or hex
+  T.rgb = T.rgb or rgb
+  T.rgba = T.rgba or function(n, a) local r, g, b = T.rgb(n); return r, g, b, (a or 1) end
+  T.text = T.text or function(n, s) return "|cff" .. (hex[n] or hex.ink) .. tostring(s) .. "|r" end
+  T.classRGB = T.classRGB or function(tok)
+    local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[tok]
+    if c then return c.r, c.g, c.b end
+    return rgb("ink")
+  end
+  T.skin = T.skin or function(f, border)
+    if not f.SetBackdrop then return end
+    f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    f:SetBackdropColor(rgb("surface")); f:SetBackdropBorderColor(rgb(border or "line2"))
+  end
 end
 
 local G = {}
@@ -1172,6 +1176,10 @@ function Game.Settle(winner, loser)
   Comm.Send("DONE", winner, loser, amount, Game.high, Game.low, id, guild or "-")
   Book(id, winner, loser, amount, guild)
   Say(("BiS Gamba · %s %d over %s %d · %s owes %s %s"):format(winner, Game.high, loser, Game.low, loser, winner, Gold(amount)))
+  local me = MyName()
+  if me == winner then UI:Event("you win " .. Gold(amount), "good")
+  elseif me == loser then UI:Event("you pay " .. Gold(amount), "warn")
+  else UI:Event(Bare(winner) .. " beat " .. Bare(loser), "ink2") end
   local owes = Ledger.Net(loser)
   if owes > amount then Print(("%s now owes %s total"):format(loser, Gold(owes))) end
 end
@@ -1572,6 +1580,7 @@ function Game.OnComm(msg, sender)
     Fresh(max)
     local hint = (db.neverOpen or db.autoOpen == false) and "  (/gamba to open the table)" or ""
     Print(sender .. " opened a table: /roll " .. max .. hint)
+    UI:Event(Bare(sender) .. " deals - /roll " .. max, "gold")
     Sound.Play("open")
     UI:AutoShow()
     UI:Refresh()
@@ -1969,6 +1978,7 @@ function Trade.OnComplete()
       Ledger.Announce(who, me, paid, "T")
       local left = FindDebt(who, me)
       Print(("%s paid you %s%s"):format(who, Gold(paid), left and (", they still owe " .. Gold(left.amount)) or " - square"))
+      UI:Event(Bare(who) .. " paid " .. Gold(paid), "good")
     end
   end
   Trade.pending = nil
@@ -2064,6 +2074,14 @@ local CELL_H = ROLL_H + ART_H + 6 + TEXT_H
 local COLS = 10
 local MIN_W = math.max(5 * CELL_W + 2 * PAD, 486)
 local MAX_ROWS = 4       -- 40 seats, ten to a row
+
+-- Header prompt budget (bis-theme header law, landmine #9). The prompt+words sit
+-- at x=12; the header button strip is x(22) options(50) board(74) sync(38)
+-- debts(44) 3d(26) 2d(26) with a -4 gap each and -10 before the view pair and -8
+-- at the close, so the leftmost button's left edge is 486 - (8+22+4+50+4+74+4+38+4
+-- +44+10+26+2+26) = 486 - 316 = 170 from the left. 170 - 12 = 158 clear; held at
+-- 148 so a long line keeps air instead of touching the 2d button.
+local CONSOLE_W = 148
 
 -- what a 2D portrait does instead of an animation
 local MOOD_WORD = {
@@ -2513,11 +2531,11 @@ function UI:Build()
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   title:SetPoint("TOPLEFT", 12, -10)
-  title:SetText(T.text("accent", "BiS Gamba"))
   self.title = title
-  local host = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  host:SetPoint("LEFT", title, "RIGHT", 8, 0)
-  self.hostText = host
+  -- the title IS the BiS> prompt now; its words rotate the game's standing state
+  -- (name, host, seats, whose turn) and events jump in over them. No chat clutter.
+  self.con = T.Console(title, { width = CONSOLE_W })
+  self.con:Set("name", "Gamba", "accent")
 
   local close = SmallButton(f, "x")
   close:SetPoint("TOPRIGHT", -8, -8)
@@ -2793,6 +2811,8 @@ function UI:Build()
     self.tick = (self.tick or 0) + elapsed
     local now = GetTime()
 
+    if self.con then self.con:Paint() end   -- blink, rotate the slots, expire events
+
     -- the last call ticks once a second: redraw, and give the host a beat
     local left = Game.Countdown()
     local n = left and math.ceil(left) or nil
@@ -2886,6 +2906,42 @@ function UI:Layout()
   if n == 0 then self.empty:Show() else self.empty:Hide() end
 end
 
+-- An event line in the header prompt: jumps in over the slots, holds, then the
+-- rotation resumes. No-op until the window (and its console) is built.
+function UI:Event(text, colour)
+  if self.con then self.con:Say(text, colour) end
+end
+
+-- The header prompt's standing slots: whose table, the stakes, and either the
+-- seat count (joining) or who still owes a roll (rolling). Events go through Say.
+function UI:Console()
+  local con = self.con
+  if not con then return end
+  local s = Game.state
+  if Game.Active() then
+    con:Set("host", Game.IsHost() and "your table" or (Bare(Game.host) .. "'s table"),
+      Game.IsHost() and "gold" or "muted")
+    con:Set("pot", "/roll " .. Game.max, "ink2")
+  else
+    con:Set("host", nil); con:Set("pot", nil)
+  end
+  if s == "JOIN" then
+    con:Set("phase", #Game.order .. " in", "good")
+  elseif s == "ROLL" or s == "TIE" then
+    local miss = Game.Missing()
+    if #miss > 0 then
+      local names = {}
+      for i = 1, math.min(3, #miss) do names[i] = Bare(miss[i]) end
+      if #miss > 3 then names[#names + 1] = "+" .. (#miss - 3) end
+      con:Set("phase", "roll: " .. table.concat(names, ", "), "gold")
+    else
+      con:Set("phase", "all rolled", "good")
+    end
+  else
+    con:Set("phase", nil)
+  end
+end
+
 function UI:Refresh()
   if not self.frame or not self.frame:IsShown() then return end
   self:Layout()
@@ -2910,7 +2966,7 @@ function UI:Refresh()
   self.wager:EnableMouse(canOpen)
   self.wager:SetTextColor(T.rgb(canOpen and "ink" or "dim"))
   if not canOpen then self.wager:ClearFocus() end
-  self.hostText:SetText(Game.Remote() and T.text("muted", Game.host .. "'s table") or "")
+  self:Console()
 
   if s == "IDLE" then
     local owes, owed = Ledger.Net(me)

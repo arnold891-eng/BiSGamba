@@ -9,4 +9,5 @@
 ## X-Category: Raid
 ## X-License: MIT
 
+Libs\BiSTheme\Console.lua
 BiSGamba.lua
