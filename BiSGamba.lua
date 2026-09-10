@@ -3229,387 +3229,189 @@ function UI:OnResult(winner, loser)
 end
 
 ----------------------------------------------------------------------------
--- Options window
+-- Options window (the shared BiSTheme/Options.lua kit; Gamba is an adopter).
 --
--- A flat, layered config panel in the spirit of FojjiCore's - a left rail of
--- tabs, surfaces that step a shade lighter as they come forward, 1px texture
--- borders, everything hand-built - but in BiS violet on violet-black, and
--- wired straight to the same toggles the slash commands set.
+-- One narrow flat window, four control kinds, no tabs. Each row's `set` calls a
+-- shared owner in `Own` that does the work and its live side effect; the same
+-- owner is what the /gamba slash handlers call, so the window and chat never
+-- drift. The window says every change in its BiS> prompt; the slash adds the
+-- chat line. See claude/bis-options.md for the law.
 ----------------------------------------------------------------------------
-local Cfg = { built = false, tab = "Table", controls = {} }
-UI.Cfg = Cfg
 
--- shades, darkest (furthest back) to lightest (most forward)
-local function hx(h) return tonumber(h:sub(1,2),16)/255, tonumber(h:sub(3,4),16)/255, tonumber(h:sub(5,6),16)/255 end
-local SH = {
-  frame   = { hx("0d0b18") },
-  header  = { hx("141127") },
-  sidebar = { hx("191531") },
-  content = { hx("1f1a3a") },
-  field   = { hx("17132e") },
-  hair    = { hx("2a2446") },
-  edge    = { hx("3a3260") },
-}
-local function shade(name, a) local c = SH[name]; return c[1], c[2], c[3], a or 1 end
+-- owners: work + live side effect, no chat line (the window prompt says it; the
+-- slash handler adds the chat). One per setting, shared by both callers.
+local Own = {}
+G.Own = Own
+function Own.minimap(on)
+  db.minimap = on and true or false
+  local M = G.Minimap
+  if M and M.button then if db.minimap then M.button:Show() else M.button:Hide() end end
+end
+function Own.comm(on)
+  local lib = _G.LibBiSComm
+  if lib then lib:SetEnabled(on and true or false) end
+  if G.SharedComm then G.SharedComm.Save() end
+end
+function Own.recenter()
+  if UI.frame then
+    UI.frame:ClearAllPoints(); UI.frame:SetPoint("CENTER")
+    db.point, db.rel, db.x, db.y = "CENTER", "CENTER", 0, 0
+  end
+end
+function Own.wager(v) db.wager = v end
+function Own.flat(on) db.payDiff = not on; UI:Refresh() end   -- on = flat (full wager)
+function Own.autojoin(on) db.autoJoin = on and true or false end
+function Own.announce(on) db.announce = on and true or false end
+function Own.lastCall(v) db.lastCall = v end
+function Own.grace(v) db.grace = v end
+function Own.remind(v) db.remind = v end
+function Own.scope(v) db.boardScope = v; if Rebuild then Rebuild() end; UI:Refresh() end
+function Own.whisper(on) db.whisper = on and true or false end
+function Own.autocopy(on) db.autoCopy = on and true or false end
+function Own.sound(on) db.sound = on and true or false; if db.sound and Sound then Sound.quiet = false end end
+function Own.channel(v) db.soundChannel = v end
+function Own.view(v) db.view = v; UI:Refresh() end
+function Own.scale(v) db.scale = v; if UI.frame then UI.frame:SetScale(v) end end
+function Own.portrait(v) db.portrait = v; UI:Refresh() end
+function Own.combat(on) db.combat = on and true or false end
+function Own.popup(on) db.autoOpen = on and true or false; UI:Refresh() end
+function Own.neveropen(on) db.neverOpen = on and true or false; UI:Refresh() end
 
-local function tex(parent, layer, name, a)
-  local t = parent:CreateTexture(nil, layer)
-  if SH[name] then t:SetColorTexture(shade(name, a)) else t:SetColorTexture(T.rgba(name, a)) end
-  return t
+-- the FojjiCore voice packs, as a stepper list: off, auto, then each pack.
+local function VoiceList()
+  local out = { "off", "auto" }
+  local fc = _G.FojjiCore
+  if fc and fc.voicePackOrder then for _, n in ipairs(fc.voicePackOrder) do out[#out + 1] = n end end
+  return out
+end
+local function VoiceShort(v)
+  v = v or "auto"
+  if v == "off" or v == "auto" then return v end
+  return (tostring(v):gsub("^%a[%a%s]-%-%s*", ""))   -- drop a "Community - " style prefix
+end
+function Own.voice(i)
+  local l = VoiceList()
+  if i < 1 then i = 1 elseif i > #l then i = #l end
+  db.voice = l[i]
+  if Sound then Sound.voice = {}; if db.voice ~= "off" then Sound.Play("open") end end
+end
+G.VoiceList = VoiceList
+
+-- The option list: sections top to bottom, each a { title, rows }. Rebuilt on
+-- open so it reflects whether FojjiCore / LibBiSComm are actually here.
+function UI:OptionSections()
+  local gamba = {
+    { kind = "toggle", label = "minimap button",
+      get = function() return db.minimap ~= false end, set = function(_, on) Own.minimap(on) end },
+  }
+  if _G.LibBiSComm then
+    gamba[#gamba + 1] = { kind = "toggle", label = "BiS channel (/bis)",
+      get = function() local lib = _G.LibBiSComm; return lib and lib:Enabled() and true or false end,
+      set = function(_, on) Own.comm(on) end }
+  end
+  gamba[#gamba + 1] = { kind = "button", label = "reset window position", button = "reset",
+    action = function() Own.recenter() end }
+
+  local sound = {
+    { kind = "toggle", label = "sound cues",
+      get = function() return db.sound ~= false end, set = function(_, on) Own.sound(on) end },
+    { kind = "seg", label = "channel", values = { "SFX", "Master" },
+      get = function() return db.soundChannel == "Master" and "Master" or "SFX" end,
+      set = function(_, v) Own.channel(v) end },
+  }
+  if _G.FojjiCore and _G.FojjiCore.voicePackOrder then
+    local vlist = VoiceList()
+    sound[#sound + 1] = { kind = "step", label = "voice pack", min = 1, max = #vlist, step = 1,
+      get = function() local l = VoiceList(); for i, n in ipairs(l) do if n == (db.voice or "auto") then return i end end; return 2 end,
+      set = function(_, i) Own.voice(i) end,
+      show = function() return VoiceShort(db.voice) end }
+  end
+  sound[#sound + 1] = { kind = "button", label = "test the cues", button = "test",
+    action = function()
+      if Sound then
+        Sound.quiet = false; Sound.warned = false
+        for i, name in ipairs({ "open", "call", "tick", "tick3", "go", "you", "tie", "redo", "win", "lose", "paid" }) do
+          After((i - 1) * 1.0, function() Sound.Play(name) end)
+        end
+      end
+    end }
+
+  return {
+    { title = "gamba", rows = gamba },
+    { title = "table", rows = {
+      { kind = "step", label = "default roll range", min = 10, max = 1000, step = 10,
+        get = function() return db.wager or 100 end, set = function(_, v) Own.wager(v) end,
+        show = function() return "/roll " .. (db.wager or 100) end },
+      { kind = "toggle", label = "flat stakes",
+        get = function() return not db.payDiff end, set = function(_, on) Own.flat(on) end },
+      { kind = "toggle", label = "seat anyone who rolls",
+        get = function() return db.autoJoin and true or false end, set = function(_, on) Own.autojoin(on) end },
+      { kind = "toggle", label = "announce in chat",
+        get = function() return db.announce ~= false end, set = function(_, on) Own.announce(on) end },
+    } },
+    { title = "timing", rows = {
+      { kind = "step", label = "last call", min = 3, max = 30, step = 1,
+        get = function() return db.lastCall or 10 end, set = function(_, v) Own.lastCall(v) end,
+        show = function() return (db.lastCall or 10) .. "s" end },
+      { kind = "step", label = "settle grace", min = 0, max = 10, step = 1,
+        get = function() return db.grace or 3 end, set = function(_, v) Own.grace(v) end,
+        show = function() return (db.grace or 3) .. "s" end },
+      { kind = "step", label = "straggler reminder", min = 0, max = 120, step = 5,
+        get = function() return db.remind or 30 end, set = function(_, v) Own.remind(v) end,
+        show = function() local r = db.remind or 30; return r == 0 and "off" or (r .. "s") end },
+    } },
+    { title = "ledger", rows = {
+      { kind = "seg", label = "board", values = { "guild", "all" },
+        get = function() return G.Scope() end, set = function(_, v) Own.scope(v) end },
+      { kind = "toggle", label = "whisper the balance",
+        get = function() return db.whisper ~= false end, set = function(_, on) Own.whisper(on) end },
+      { kind = "toggle", label = "select the amount",
+        get = function() return db.autoCopy ~= false end, set = function(_, on) Own.autocopy(on) end },
+      { kind = "button", label = "wipe my ledger", button = "wipe",
+        action = function() G.WipeStats(); if UI.frame then UI:Refresh() end end },
+      { kind = "button", label = "reset board for all", button = "reset",
+        action = function() G.AskToWipe(nil) end },
+    } },
+    { title = "sound", rows = sound },
+    { title = "display", rows = {
+      { kind = "seg", label = "portraits", values = { "2d", "3d" },
+        get = function() return View() end, set = function(_, v) Own.view(v) end },
+      { kind = "step", label = "window scale", min = 50, max = 200, step = 5,
+        get = function() return math.floor((db.scale or 1) * 100 + 0.5) end,
+        set = function(_, v) Own.scale(v / 100) end,
+        show = function() return math.floor((db.scale or 1) * 100 + 0.5) .. "%" end },
+      { kind = "step", label = "3d zoom", min = 0, max = 100, step = 5,
+        get = function() return math.floor((db.portrait or 0.75) * 100 + 0.5) end,
+        set = function(_, v) Own.portrait(v / 100) end,
+        show = function() return math.floor((db.portrait or 0.75) * 100 + 0.5) .. "%" end },
+      { kind = "toggle", label = "hide in combat",
+        get = function() return db.combat ~= false end, set = function(_, on) Own.combat(on) end },
+      { kind = "toggle", label = "open on a new game",
+        get = function() return db.autoOpen ~= false end, set = function(_, on) Own.popup(on) end },
+      { kind = "toggle", label = "never open anything",
+        get = function() return db.neverOpen == true end, set = function(_, on) Own.neveropen(on) end },
+    } },
+  }
 end
 
-local function border(f, name, a)
-  local col = { top = {}, bottom = {}, left = {}, right = {} }
-  local function bar() local b = f:CreateTexture(nil, "BORDER"); b:SetColorTexture(T.rgba(name, a or 1)); return b end
-  col.top = bar();    col.top:SetPoint("TOPLEFT");    col.top:SetPoint("TOPRIGHT");    col.top:SetHeight(1)
-  col.bottom = bar(); col.bottom:SetPoint("BOTTOMLEFT"); col.bottom:SetPoint("BOTTOMRIGHT"); col.bottom:SetHeight(1)
-  col.left = bar();   col.left:SetPoint("TOPLEFT");   col.left:SetPoint("BOTTOMLEFT");  col.left:SetWidth(1)
-  col.right = bar();  col.right:SetPoint("TOPRIGHT"); col.right:SetPoint("BOTTOMRIGHT"); col.right:SetWidth(1)
-  function col:set(n, aa) for _, b in pairs(self) do if type(b) == "table" and b.SetColorTexture then b:SetColorTexture(T.rgba(n, aa or 1)) end end end
-  return col
-end
-
-local function fs(parent, text, size, colorName)
-  local f = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  local font = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
-  f:SetFont(font, size or 12, "")
-  f:SetText(text or "")
-  f:SetTextColor(T.rgb(colorName or "ink"))
+-- Build the window from the option list, once. The kit carries the chrome.
+function UI:BuildOptions()
+  if self.opt then return self.opt end
+  local f = T.Options("BiSGambaOptions", T.OPTIONS and T.OPTIONS.W or 230, "Gamba")
+  for _, sec in ipairs(self:OptionSections()) do
+    f:Section(sec.title)
+    for _, row in ipairs(sec.rows) do if row then f:Row(row, db) end end
+  end
+  f:Fit()
+  f.onChange = function() if UI.frame and UI.frame:IsShown() then UI:Refresh() end end
+  self.opt = f
+  tinsert(UISpecialFrames, "BiSGambaOptions")
   return f
 end
 
--- live effects when a setting changes
-local function Apply()
-  if UI.frame then UI.frame:SetScale(db.scale or 1) end
-  local M = G.Minimap
-  if M and M.button then if db.minimap == false then M.button:Hide() else M.button:Show() end end
-  UI:Refresh()
-end
+function UI:OpenConfig() self:BuildOptions():Toggle(true) end
+function UI:ToggleConfig() self:BuildOptions():Toggle() end
 
--- widgets -------------------------------------------------------------------
-local ROW_H = 30
-
-local function Check(page, y, id, label, tip, get, set)
-  local row = CreateFrame("Button", nil, page)
-  row:SetSize(page.w, ROW_H); row:SetPoint("TOPLEFT", 0, y)
-  local box = CreateFrame("Frame", nil, row)
-  box:SetSize(18, 18); box:SetPoint("LEFT", 0, 0)
-  local bg = tex(box, "BACKGROUND", "field"); bg:SetAllPoints()
-  local bd = border(box, "edge")
-  local fill = tex(box, "ARTWORK", "accent"); fill:SetPoint("TOPLEFT", 4, -4); fill:SetPoint("BOTTOMRIGHT", -4, 4)
-  local lbl = fs(row, label, 12, "ink"); lbl:SetPoint("LEFT", box, "RIGHT", 10, 0)
-  local function paint() if get() then fill:Show(); bd:set("accent", 0.8) else fill:Hide(); bd:set("edge") end end
-  local ctrl = { paint = paint }
-  function ctrl.set(v) set(v and true or false); paint(); Apply() end
-  function ctrl.get() return get() end
-  row:SetScript("OnClick", function() ctrl.set(not get()) end)
-  row:SetScript("OnEnter", function() bd:set("accent", 0.8); if tip then GameTooltip:SetOwner(row, "ANCHOR_TOPLEFT"); GameTooltip:SetText(label); GameTooltip:AddLine(tip, .6,.63,.67, true); GameTooltip:Show() end end)
-  row:SetScript("OnLeave", function() paint(); GameTooltip:Hide() end)
-  paint()
-  Cfg.controls[id] = ctrl
-  return y - ROW_H
-end
-
-local function Seg(page, y, id, label, options, get, set)
-  local row = CreateFrame("Frame", nil, page)
-  row:SetSize(page.w, ROW_H); row:SetPoint("TOPLEFT", 0, y)
-  fs(row, label, 12, "ink"):SetPoint("LEFT", 0, 0)
-  local pills = {}
-  local x = 0
-  local function paint()
-    for v, p in pairs(pills) do
-      local on = get() == v
-      if on then p.bg:SetColorTexture(T.rgba("accent", 0.18)) else p.bg:SetColorTexture(shade("field")) end
-      p.bd:set(on and "accent" or "edge", on and 0.8 or 1)
-      p.lbl:SetTextColor(T.rgb(on and "accent" or "muted"))
-    end
-  end
-  local ctrl = { paint = paint }
-  function ctrl.set(v) set(v); paint(); Apply() end
-  function ctrl.get() return get() end
-  for i = #options, 1, -1 do
-    local opt = options[i]
-    local w = opt.w or 58
-    local p = CreateFrame("Button", nil, row)
-    p:SetSize(w, 20); p:SetPoint("RIGHT", -x, 0)
-    p.bg = tex(p, "BACKGROUND", "field"); p.bg:SetAllPoints()
-    p.bd = border(p, "edge")
-    p.lbl = fs(p, opt.label, 11, "muted"); p.lbl:SetPoint("CENTER")
-    p:SetScript("OnClick", function() ctrl.set(opt.v) end)
-    p:SetScript("OnEnter", function() if get() ~= opt.v then p.bd:set("accent", 0.6) end end)
-    p:SetScript("OnLeave", function() paint() end)
-    pills[opt.v] = p
-    x = x + w + 4
-  end
-  paint()
-  Cfg.controls[id] = ctrl
-  return y - ROW_H
-end
-
-local function Slider(page, y, id, label, lo, hi, step, fmt, get, set)
-  local row = CreateFrame("Frame", nil, page)
-  row:SetSize(page.w, ROW_H + 6); row:SetPoint("TOPLEFT", 0, y)
-  local lbl = fs(row, label, 12, "ink"); lbl:SetPoint("TOPLEFT", 0, 0)
-  local val = fs(row, "", 12, "accent"); val:SetPoint("TOPRIGHT", 0, 0)
-  local track = CreateFrame("Frame", nil, row)
-  track:SetPoint("TOPLEFT", 0, -18); track:SetPoint("TOPRIGHT", 0, -18); track:SetHeight(6)
-  tex(track, "BACKGROUND", "field"):SetAllPoints()
-  border(track, "edge")
-  local sl = CreateFrame("Slider", nil, track)
-  sl:SetAllPoints(); sl:SetOrientation("HORIZONTAL")
-  sl:SetMinMaxValues(lo, hi); sl:SetValueStep(step); sl:SetObeyStepOnDrag(true)
-  local thumb = sl:CreateTexture(nil, "OVERLAY"); thumb:SetColorTexture(T.rgba("accent", 1)); thumb:SetSize(10, 16)
-  sl:SetThumbTexture(thumb)
-  local ctrl = {}
-  local guard = false
-  local function show(v) val:SetText(fmt and fmt(v) or tostring(v)) end
-  function ctrl.set(v)
-    v = math.max(lo, math.min(hi, v))
-    guard = true; sl:SetValue(v); guard = false
-    set(v); show(v); Apply()
-  end
-  function ctrl.get() return get() end
-  sl:SetScript("OnValueChanged", function(_, v)
-    if guard then return end
-    if step >= 1 then v = math.floor(v + 0.5) end
-    set(v); show(v); Apply()
-  end)
-  guard = true; sl:SetValue(get()); guard = false; show(get())
-  Cfg.controls[id] = ctrl
-  return y - (ROW_H + 12)
-end
-
-local function Btn(page, y, id, label, tip, onclick, colorName)
-  local b = CreateFrame("Button", nil, page)
-  b:SetSize(150, 22); b:SetPoint("TOPLEFT", 0, y)
-  local bg = tex(b, "BACKGROUND", "field"); bg:SetAllPoints()
-  local bd = border(b, "edge")
-  local lbl = fs(b, label, 12, colorName or "ink2"); lbl:SetPoint("CENTER")
-  b:SetScript("OnClick", function() onclick() end)
-  b:SetScript("OnEnter", function() bd:set(colorName == "warn" and "warn" or "accent", 0.8); if tip then GameTooltip:SetOwner(b, "ANCHOR_TOPLEFT"); GameTooltip:SetText(tip, nil, nil, nil, nil, true); GameTooltip:Show() end end)
-  b:SetScript("OnLeave", function() bd:set("edge"); GameTooltip:Hide() end)
-  if id then Cfg.controls[id] = { click = onclick } end
-  return y - 30
-end
-
-local function Caption(page, y, text)
-  local c = fs(page, string.upper(text), 10, "muted"); c:SetPoint("TOPLEFT", 0, y)
-  return y - 20
-end
-
--- pages ---------------------------------------------------------------------
-local function BuildTable(page)
-  local y = 0
-  y = Caption(page, y, "The game")
-  y = Slider(page, y, "wager", "Default roll range", 10, 1000, 5, function(v) return "/roll " .. v end,
-    function() return db.wager end, function(v) db.wager = v end)
-  y = Seg(page, y, "flat", "Loser pays", { {v=true,label="difference",w=76}, {v=false,label="full wager",w=76} },
-    function() return db.payDiff and true or false end, function(v) db.payDiff = v end)
-  y = y - 6
-  y = Caption(page, y, "Timing")
-  y = Slider(page, y, "lastCall", "Last-call countdown", 3, 30, 1, function(v) return v .. "s" end,
-    function() return db.lastCall end, function(v) db.lastCall = v end)
-  y = Slider(page, y, "grace", "Settle grace", 0, 10, 1, function(v) return v .. "s" end,
-    function() return db.grace end, function(v) db.grace = v end)
-  y = Slider(page, y, "remind", "Straggler reminder", 0, 120, 5, function(v) return v == 0 and "off" or (v .. "s") end,
-    function() return db.remind end, function(v) db.remind = v end)
-  y = y - 6
-  y = Caption(page, y, "Joining")
-  y = Check(page, y, "autojoin", "Seat anyone who rolls the range",
-    "Off: only people who type 1 (or hit join) are in. On: rolling the range while the table is open deals you in.",
-    function() return db.autoJoin end, function(v) db.autoJoin = v end)
-  y = Check(page, y, "announce", "Announce the game in chat",
-    "Post the open / last call / result lines to the group. Off keeps it all to your own window.",
-    function() return db.announce ~= false end, function(v) db.announce = v end)
-end
-
-local function BuildLedger(page)
-  local y = 0
-  y = Caption(page, y, "Leaderboard")
-  y = Seg(page, y, "scope", "Count", { {v="guild",label="guild only",w=76}, {v="all",label="everyone",w=70} },
-    function() return db.boardScope == "guild" and "guild" or "all" end,
-    function(v) db.boardScope = v; if Rebuild then Rebuild() end end)
-  y = y - 6
-  y = Caption(page, y, "Paying")
-  y = Check(page, y, "whisper", "Whisper the balance on a trade",
-    "When a trade opens, whisper the other person what they owe or are owed - only if they are not running the addon.",
-    function() return db.whisper ~= false end, function(v) db.whisper = v end)
-  y = Check(page, y, "autocopy", "Select the amount to pay for me",
-    "When a trade opens and you owe them, put the amount in a box already highlighted, ready to Ctrl+C.",
-    function() return db.autoCopy ~= false end, function(v) db.autoCopy = v end)
-  y = y - 10
-  y = Caption(page, y, "Danger")
-  y = Btn(page, y, "wipemine", "Wipe my ledger", "Clear your own leaderboard and rounds. Debts are kept.",
-    function() G.WipeStats(); Print("your leaderboard is wiped"); Apply() end, "warn")
-  y = y - 4
-  Btn(page, y, "wipeall", "Reset the board for everyone", "Ask everyone running the addon to wipe. Each confirms; debts are kept.",
-    function() G.AskToWipe(nil) end, "warn")
-end
-
-local function BuildSound(page)
-  local y = 0
-  y = Caption(page, y, "Cues")
-  y = Check(page, y, "sound", "Play sound cues",
-    "Little motifs for last call, your turn, winning, losing and payouts.",
-    function() return db.sound ~= false end, function(v) db.sound = v; if v and Sound then Sound.quiet = false; Sound.Play("open") end end)
-  y = Seg(page, y, "channel", "Channel", { {v="SFX",label="effects",w=64}, {v="Master",label="master",w=64} },
-    function() return db.soundChannel == "Master" and "Master" or "SFX" end, function(v) db.soundChannel = v end)
-  y = y - 4
-  y = Btn(page, y, "soundtest", "Test the cues", "Play every cue in order.",
-    function() if Sound then Sound.quiet = false; Sound.warned = false; for i, name in ipairs({ "open","call","tick","tick3","go","you","tie","redo","win","lose","paid" }) do After((i-1)*1.0, function() Sound.Play(name) end) end end end)
-  y = y - 8
-  y = Caption(page, y, "Voice (FojjiCore)")
-  local fc = _G.FojjiCore
-  if fc and fc.voicePackOrder then
-    local cur = fs(page, "", 12, "ink"); cur:SetPoint("TOPLEFT", 0, y)
-    cur:SetText("Pack: " .. tostring(db.voice or "auto")); y = y - 22
-    y = Btn(page, y, "voicecycle", "Next voice pack", "Cycle through the installed FojjiCore packs.",
-      function()
-        local order = fc.voicePackOrder or {}
-        local i = 0; for k, n in ipairs(order) do if n == db.voice then i = k end end
-        db.voice = order[(i % #order) + 1]; cur:SetText("Pack: " .. tostring(db.voice))
-        if Sound then Sound.voice = {} end
-      end)
-    y = y - 4
-    Btn(page, y, "voiceoff", "Voice off (use tones)", "Go back to the sound motifs.",
-      function() db.voice = "off"; cur:SetText("Pack: off (tones)") end)
-  else
-    fs(page, "FojjiCore not installed - the tones are used.", 11, "muted"):SetPoint("TOPLEFT", 0, y)
-  end
-end
-
-local function BuildDisplay(page)
-  local y = 0
-  y = Caption(page, y, "The table")
-  y = Seg(page, y, "view", "Portraits", { {v="2d",label="2D",w=42}, {v="3d",label="3D",w=42} },
-    function() return View() end, function(v) db.view = v end)
-  y = Slider(page, y, "scale", "Window scale", 0.5, 2.0, 0.05, function(v) return string.format("%.0f%%", v * 100) end,
-    function() return db.scale or 1 end, function(v) db.scale = v end)
-  y = Slider(page, y, "portrait", "3D portrait zoom", 0, 1, 0.05, function(v) return string.format("%.0f%%", v * 100) end,
-    function() return db.portrait or 0.75 end, function(v) db.portrait = v end)
-  y = y - 6
-  y = Caption(page, y, "Behaviour")
-  y = Check(page, y, "minimap", "Minimap button",
-    "Show the coin on the minimap. Left opens the table, right rolls.",
-    function() return db.minimap ~= false end, function(v) db.minimap = v end)
-  y = Check(page, y, "combat", "Hide in combat",
-    "Tuck the window away when you enter combat and bring it back when you leave.",
-    function() return db.combat ~= false end, function(v) db.combat = v end)
-  y = Check(page, y, "popup", "Open when a game starts",
-    "Pop the window up on its own when somebody starts a table.",
-    function() return db.autoOpen ~= false end, function(v) db.autoOpen = v end)
-  y = Check(page, y, "neveropen", "Never open anything",
-    "Nothing appears on its own, ever - no window on a new game, none back after combat, no pop-ups from others.",
-    function() return db.neverOpen == true end, function(v) db.neverOpen = v end)
-end
-
-local PAGES = {
-  { name = "Table",   build = BuildTable },
-  { name = "Ledger",  build = BuildLedger },
-  { name = "Sound",   build = BuildSound },
-  { name = "Display", build = BuildDisplay },
-}
-
-function UI:ShowConfigTab(name)
-  Cfg.tab = name
-  for _, t in pairs(Cfg.tabs) do
-    local on = t.name == name
-    t.indicator:SetShown(on)
-    t.glow:SetShown(on)
-    t.label:SetTextColor(T.rgb(on and "ink" or "muted"))
-    Cfg.pages[t.name]:SetShown(on)
-  end
-end
-
-function UI:BuildConfig()
-  if Cfg.built then return end
-  Cfg.built = true
-  Cfg.tabs, Cfg.pages = {}, {}
-
-  local f = CreateFrame("Frame", "BiSGambaConfig", UIParent)
-  f:SetSize(700, 500); f:SetPoint("CENTER"); f:SetFrameStrata("DIALOG"); f:SetFrameLevel(120)
-  f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag("LeftButton")
-  f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
-  f:SetClampedToScreen(true); f:Hide()
-  tex(f, "BACKGROUND", "frame", 0.98):SetAllPoints()
-  border(f, "accent", 0.55)
-  tinsert(UISpecialFrames, "BiSGambaConfig")
-  Cfg.frame = f
-
-  -- header
-  local head = CreateFrame("Frame", nil, f)
-  head:SetPoint("TOPLEFT", 1, -1); head:SetPoint("TOPRIGHT", -1, -1); head:SetHeight(64)
-  tex(head, "BACKGROUND", "header"):SetAllPoints()
-  local coin = head:CreateTexture(nil, "ARTWORK")
-  coin:SetSize(30, 30); coin:SetPoint("LEFT", 18, 0)
-  coin:SetTexture("Interface\\Icons\\INV_Misc_Coin_02"); coin:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  local title = head:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 16, "")
-  title:SetText("|cffb980ffBiS|r |cffe5c04aGamba|r"); title:SetPoint("LEFT", coin, "RIGHT", 10, 6)
-  local ver = fs(head, "Settings  -  " .. ((GetAddOnMetadata and GetAddOnMetadata("BiSGamba", "Version")) or ""), 10, "dim")
-  ver:SetPoint("LEFT", coin, "RIGHT", 10, -9)
-  local x = CreateFrame("Button", nil, head); x:SetSize(28, 28); x:SetPoint("RIGHT", -16, 0)
-  tex(x, "BACKGROUND", "field"):SetAllPoints()
-  local xbd = border(x, "edge"); local xt = fs(x, "x", 15, "muted"); xt:SetPoint("CENTER", 0, 1)
-  x:SetScript("OnEnter", function() xbd:set("accent", 0.8); xt:SetTextColor(T.rgb("ink")) end)
-  x:SetScript("OnLeave", function() xbd:set("edge"); xt:SetTextColor(T.rgb("muted")) end)
-  x:SetScript("OnClick", function() f:Hide() end)
-  local hsep = tex(f, "ARTWORK", "hair"); hsep:SetPoint("TOPLEFT", 1, -65); hsep:SetPoint("TOPRIGHT", -1, -65); hsep:SetHeight(1)
-
-  -- body: sidebar + content
-  local body = CreateFrame("Frame", nil, f); body:SetPoint("TOPLEFT", 1, -66); body:SetPoint("BOTTOMRIGHT", -1, 1)
-  local side = CreateFrame("Frame", nil, body); side:SetPoint("TOPLEFT"); side:SetPoint("BOTTOMLEFT"); side:SetWidth(168)
-  tex(side, "BACKGROUND", "sidebar"):SetAllPoints()
-  local cont = CreateFrame("Frame", nil, body); cont:SetPoint("TOPLEFT", side, "TOPRIGHT"); cont:SetPoint("BOTTOMRIGHT")
-  tex(cont, "BACKGROUND", "content"):SetAllPoints()
-  local divide = tex(body, "ARTWORK", "edge"); divide:SetPoint("TOPLEFT", side, "TOPRIGHT"); divide:SetPoint("BOTTOMLEFT", side, "BOTTOMRIGHT"); divide:SetWidth(1)
-
-  -- tabs
-  for i, spec in ipairs(PAGES) do
-    local b = CreateFrame("Button", nil, side)
-    b:SetSize(168, 44); b:SetPoint("TOPLEFT", 0, -14 - (i - 1) * 44)
-    b.name = spec.name
-    b.glow = tex(b, "BACKGROUND", "accent", 0.10); b.glow:SetAllPoints(); b.glow:Hide()
-    b.indicator = tex(b, "ARTWORK", "accent", 1); b.indicator:SetPoint("TOPLEFT"); b.indicator:SetPoint("BOTTOMLEFT"); b.indicator:SetWidth(3); b.indicator:Hide()
-    b.label = fs(b, spec.name, 13, "muted"); b.label:SetPoint("LEFT", 24, 0)
-    b:SetScript("OnEnter", function() if Cfg.tab ~= spec.name then b.glow:SetColorTexture(1,1,1,0.03); b.glow:Show(); b.label:SetTextColor(T.rgb("ink2")) end end)
-    b:SetScript("OnLeave", function() if Cfg.tab ~= spec.name then b.glow:Hide(); b.label:SetTextColor(T.rgb("muted")) end end)
-    b:SetScript("OnClick", function() UI:ShowConfigTab(spec.name) end)
-    Cfg.tabs[i] = b
-
-    local page = CreateFrame("Frame", nil, cont)
-    page:SetPoint("TOPLEFT", 30, -26); page:SetPoint("BOTTOMRIGHT", -30, 24)
-    page.w = 700 - 168 - 60
-    page:Hide()
-    spec.build(page)
-    Cfg.pages[spec.name] = page
-  end
-
-  local tip = fs(cont, "Everything here is also a /gamba command - /gamba help", 10, "dim")
-  tip:SetPoint("BOTTOMLEFT", 30, 8)
-end
-
-function UI:OpenConfig()
-  self:BuildConfig()
-  Cfg.frame:Show()
-  self:ShowConfigTab(Cfg.tab or "Table")
-end
-function UI:ToggleConfig()
-  self:BuildConfig()
-  if Cfg.frame:IsShown() then Cfg.frame:Hide() else self:OpenConfig() end
-end
-
--- for the harness and for /gamba: set a control by id
-function UI:ConfigSet(id, v)
-  self:BuildConfig()
-  local c = Cfg.controls[id]
-  if c and c.set then c.set(v) elseif c and c.click then c.click() end
-end
-function UI:ConfigGet(id)
-  self:BuildConfig()
-  local c = Cfg.controls[id]
-  return c and c.get and c.get()
-end
 
 
 ----------------------------------------------------------------------------
