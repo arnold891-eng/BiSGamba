@@ -2066,14 +2066,14 @@ local VIEWS = { "2d", "3d" }
 -- One grid, one cell size, for every view. Switching views only changes what is
 -- drawn in the art box - never the size of anything - so nothing moves under the
 -- mouse when you flip between them.
-local ROLL_H = 20        -- the roll number's own strip above the art
-local TEXT_H = 38        -- name + the two owe lines below the art
-local CELL_W = 66
-local ART_W, ART_H = 46, 58
+local ROLL_H = 16        -- the roll number's own strip above the art
+local TEXT_H = 32        -- name + the two owe lines below the art
+local CELL_W = 48
+local ART_W, ART_H = 30, 38   -- compact portraits: the 3D models shrink with the cell
 local CELL_H = ROLL_H + ART_H + 6 + TEXT_H
-local COLS = 10
-local MIN_W = math.max(5 * CELL_W + 2 * PAD, 486)
-local MAX_ROWS = 4       -- 40 seats, ten to a row
+local COLS = 13          -- up to 13 to a row now the cells are smaller
+local MIN_W = math.max(5 * CELL_W + 2 * PAD, 486)   -- the control row's floor, not the grid's
+local MAX_ROWS = 3       -- 39 seats, thirteen to a row - a full 25-man is two rows
 
 -- Header prompt budget (bis-theme header law, landmine #9). The prompt+words sit
 -- at x=12; the header button strip is x(22) options(50) board(74) sync(38)
@@ -2856,12 +2856,16 @@ end
 
 -- One grid for both views: the cells never move or change size, only the art
 -- inside them does.
+-- The table starts small ("nobody at the table") and grows as people join:
+-- the row widens to COLS, then wraps to a new row, up to MAX_ROWS. Each row is
+-- centred, so a part-full last row sits under the middle. The control row above
+-- never moves - only this seat area below it changes size.
 local function GridLayout(self, n)
   local scene = self.scene
   Extremes()
-  local rows = math.max(1, math.min(MAX_ROWS, math.ceil(n / COLS)))
-  local cols = math.min(COLS, math.max(n, 5))
-  local w = math.max(cols * CELL_W + PAD * 2, MIN_W)
+  local rows = (n == 0) and 0 or math.min(MAX_ROWS, math.ceil(n / COLS))
+  local widest = math.min(COLS, math.max(n, 1))
+  local w = math.max(widest * CELL_W + PAD * 2, MIN_W)
   local base = scene:GetFrameLevel() + 2
 
   for i, seat in ipairs(self.seats) do
@@ -2869,7 +2873,7 @@ local function GridLayout(self, n)
     if p then
       local r, col = math.floor((i - 1) / COLS), (i - 1) % COLS
       local rowCount = (r == rows - 1) and (n - r * COLS) or COLS
-      local left = (cols - rowCount) * CELL_W / 2
+      local left = (w - PAD * 2 - rowCount * CELL_W) / 2 + PAD   -- centre this row in the window
       seat.cell:SetSize(CELL_W, CELL_H)
       seat.cell:ClearAllPoints()
       seat.cell:SetPoint("TOPLEFT", scene, "TOPLEFT", left + col * CELL_W, -r * CELL_H)
@@ -2879,7 +2883,7 @@ local function GridLayout(self, n)
     FillSeat(seat, p)
   end
 
-  return w, rows * CELL_H
+  return w, (n == 0) and 44 or rows * CELL_H   -- empty is a short strip, not a full row
 end
 
 function UI:Layout()
@@ -3404,13 +3408,31 @@ function UI:BuildOptions()
   end
   f:Fit()
   f.onChange = function() if UI.frame and UI.frame:IsShown() then UI:Refresh() end end
+  f:Recenter()     -- the kit anchors nothing itself; give it a home or it opens off-screen
   self.opt = f
   tinsert(UISpecialFrames, "BiSGambaOptions")
   return f
 end
 
-function UI:OpenConfig() self:BuildOptions():Toggle(true) end
-function UI:ToggleConfig() self:BuildOptions():Toggle() end
+-- Park the options window beside the table when the table is up, else centre it.
+function UI:PlaceOptions(f)
+  f:ClearAllPoints()
+  if self.frame and self.frame:IsShown() then
+    f:SetPoint("TOPLEFT", self.frame, "TOPRIGHT", 8, 0)
+  else
+    f:Recenter()
+  end
+end
+
+function UI:OpenConfig()
+  local f = self:BuildOptions()
+  self:PlaceOptions(f)
+  f:Toggle(true)
+end
+function UI:ToggleConfig()
+  local f = self:BuildOptions()
+  if f:IsShown() then f:Toggle(false) else self:PlaceOptions(f); f:Toggle(true) end
+end
 
 
 

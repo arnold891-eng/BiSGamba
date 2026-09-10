@@ -55,7 +55,9 @@ function Frame:SetWidth(w) self.w = w end
 function Frame:GetHeight() return self.h end
 function Frame:SetTextColor() end
 function Frame:SetAllPoints() end
-function Frame:ClearAllPoints() end
+-- record anchoring so a window left unanchored (opens off-screen) is a red test
+function Frame:SetPoint(point, rel) self.points = self.points or {}; self.points[#self.points + 1] = { point = point, rel = rel } end
+function Frame:ClearAllPoints() self.points = {} end
 function Frame:SetEnabled(v) self.enabled = v and true or false end
 function Frame:SetChecked(v) self.checked = v and true or false end
 function Frame:GetChecked() return self.checked end
@@ -1360,6 +1362,7 @@ do local n = 0; for _ in pairs(_G.BiSTheme.OptionKinds) do n = n + 1 end
 SlashCmdList.BISGAMBA("config")
 local opt = G.UI.opt
 check(opt ~= nil and opt:IsShown(), "options window opens")
+check(opt.points and #opt.points > 0, "and it is anchored on screen, not left off-screen")
 check(opt:GetWidth() == OPT.W, "it stays narrow: " .. tostring(opt:GetWidth()))
 check(opt:GetHeight() == OPT.HEADER + #opt.rows * OPT.ROW + OPT.PAD, "height is header + rows + pad: " .. tostring(opt:GetHeight()))
 local function rowFor(label) for _, r in ipairs(opt.rows) do if r.opt and r.opt.label == label then return r end end end
@@ -1554,6 +1557,16 @@ local rez2 = _G.BiSRezComm
 rez2:Boot()
 check(rez2.standDown and not rez2._frame, "with BiSInnervate present the emitter stands down (no double claims)")
 loadedAddons.BiSInnervate = nil
+
+---------------------------------------------------------------- the table starts small and grows
+SlashCmdList.BISGAMBA("reset"); G.UI:Show(); G.UI:Layout()
+local emptyH = G.UI.frame.h
+SlashCmdList.BISGAMBA("start 100")
+fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); fire("CHAT_MSG_RAID", "1", "Dps1")
+G.UI:Layout()
+check(G.UI.frame.h > emptyH, "the table grows as people join (empty " .. tostring(emptyH) .. " -> seated " .. tostring(G.UI.frame.h) .. ")")
+SlashCmdList.BISGAMBA("reset"); G.UI:Layout()
+check(math.abs(G.UI.frame.h - emptyH) < 1, "and shrinks back to the short empty strip when it clears")
 
 ---------------------------------------------------------------- combat gets the window out of the way
 SlashCmdList.BISGAMBA("reset")
