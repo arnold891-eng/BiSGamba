@@ -179,28 +179,36 @@ local VOICE_LINE = {
   open = "Table", call = "Stack Up", go = "Go Forward", you = "Fixate on You", tie = "Linked",
   redo = "Spread Out", win = "Safe", lose = "Doom on You", done = "Clear", paid = "Blessing",
 }
-local VOICE_DEFAULT = "Arabella"   -- the pack "auto" prefers, when FojjiCore ships it
+local VOICE_PREFER = "Illidan"   -- TBC flavour: "auto" leans to the Betrayer when he is installed
 
 local Sound = { last = {}, quiet = false, picked = {}, voice = {} }
 G.Sound = Sound
 
---- The pack in use: "auto" means our preferred pack once FojjiCore is around, or
---- whatever it lists first if that name is gone (their lineup changes between
---- updates - we never hardcode a name that must exist).
+--- The pack in use. "auto" resolves, in order: the voice the player already
+--- picked in FojjiCore itself; else the first installed pack whose name carries
+--- our preferred flavour (Illidan) - matched by name, so a "Flavour - Illidan"
+--- still hits; else whatever FojjiCore lists first. It NEVER returns a hardcoded
+--- pack name that must exist - that was the Brittney/Arabella silent failure,
+--- where a dropped pack left auto falling back to the tones with nobody the
+--- wiser. Walk the installed list every time instead.
 local function VoicePack()
   local v = db.voice
   if v == false or v == "off" then return nil end
   local fc = _G.FojjiCore
   if v == nil or v == "auto" then
     if not fc then return nil end
-    local packs = fc.voicePacks
-    -- follow the voice the user already picked in FojjiCore, when it has one
+    local packs, order = fc.voicePacks, fc.voicePackOrder
+    -- 1. follow the voice the player set in FojjiCore, when it has one
     local db2 = _G.FojjiCoreDB
     if db2 and db2.ttsVoiceType == "custom" and db2.ttsVoicePack
        and packs and packs[db2.ttsVoicePack] then return db2.ttsVoicePack end
-    if packs and packs[VOICE_DEFAULT] then return VOICE_DEFAULT end
-    local order = fc.voicePackOrder
-    return order and order[1] or nil
+    if order then
+      -- 2. our preferred flavour, matched by name across FojjiCore's prefixes
+      for _, n in ipairs(order) do if n:lower():find(VOICE_PREFER:lower(), 1, true) then return n end end
+      -- 3. failing that, whatever it lists first (a real pack, never a stale name)
+      return order[1]
+    end
+    return nil
   end
   return v
 end
