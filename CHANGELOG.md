@@ -1,5 +1,20 @@
 # BiS Gamba - Changelog
 
+## 1.2.0
+
+- **New options window.** The settings panel is now the shared BiS options window
+  - one narrow flat panel with sections and simple controls (toggles, pickers,
+    steppers), matching the rest of the BiS addons. Open it with the **options**
+    button or `/gamba config`; it parks beside the table.
+- **The table starts small and grows.** An empty table is a short strip; it
+  expands as people join, up to thirteen to a row, so a full 25-man is two rows
+  instead of a giant grid. The portraits are more compact - the 3D models fit
+  more players on screen. The control buttons never move.
+- **Voice leans to Illidan on TBC.** With FojjiCore installed, `auto` now speaks
+  as Illidan when his pack is there, and otherwise follows whatever voice you set
+  in FojjiCore - it never sticks to a pack name that a FojjiCore update might drop
+  (which used to leave the cues silently on the tones).
+
 ## 1.1.0
 
 First public release. A shared high/low gold gambling table for raid nights, in

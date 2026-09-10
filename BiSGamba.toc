@@ -2,7 +2,7 @@
 ## Title: BiS Gamba
 ## Notes: Lightweight high/low gold gambling for raid nights - shared table, debt ledger, one-click payouts, leaderboard.
 ## Author: Kumlust
-## Version: 1.1.0
+## Version: 1.2.0
 ## SavedVariables: BiSGambaDB
 ## OptionalDeps: BiSTheme
 ## IconTexture: Interface\Icons\INV_Misc_Coin_02
