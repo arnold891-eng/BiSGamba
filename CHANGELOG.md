@@ -1,5 +1,38 @@
 # BiS Gamba - Changelog
 
+## 1.1.0
+
+First public release. A shared high/low gold gambling table for raid nights, in
+the BiS theme.
+
+- **The table.** Type a roll range, hit start, and the game is posted in raid.
+  People join by typing `1` in chat - no addon needed - or with the button.
+  Class-portrait (2D) or 3D views, one fixed grid so switching never moves
+  anything. Last call counts down and the rolls start themselves; highest wins,
+  lowest pays the difference. Winner cheers, loser cries.
+- **One window for everyone.** Host and player see the same buttons in the same
+  places; what you can't do is greyed, never hidden. Anyone can host the next
+  round and the crown moves to them. Hides itself in combat.
+- **Who owes who.** Every result nets to a debt ledger that survives logout.
+  **pay** opens the trade and hands you the gold in a copy box to paste (no addon
+  can fill it for you on this client), then settles the ledger itself - only the
+  person owed announces it, so nobody clears a debt by fibbing.
+- **Leaderboard** built from a shared round ledger, each round stamped with the
+  guild it was played in, so a guildie's bad night in a pug can't drag the guild
+  board down. A new guildie can adopt the most complete ledger with one button.
+- **Sound and voices.** Short motifs mark last call, your turn, wins and losses;
+  with FojjiCore installed they're spoken by one of its voice packs. Never the
+  raid-warning sound.
+- **A settings window** - `/gamba config`, or the options button - in a clean
+  flat panel: table, ledger, sound and display, all in BiS violet.
+- **A BiS> header** that cycles the game's state - whose table, the stakes, who
+  still owes a roll - instead of cluttering your chat.
+- **Plays well with the rest of BiS.** Carries the shared BiS channel, so just
+  having Gamba installed helps summoners see where you are; and a healer's rez
+  cast is announced to a BiS Innervate raid even if you don't run Innervate.
+
+`/gamba` opens the table, `/gamba help` lists every command.
+
 ## 1.1.0-rc9
 
 - FojjiCore's latest build dropped the "Brittney" voice pack we defaulted to.
