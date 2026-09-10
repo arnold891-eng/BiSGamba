@@ -1252,6 +1252,10 @@ check(BiSGambaDB.voice == "auto", "voice is auto by default")
 played = {}; _G.__now = _G.__now + 1
 SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
 check(heard("Illidan\\table"), "auto leans to Illidan (TBC flavour) even though it is not first: " .. tostring(played[1]))
+-- ShortPack (== BiSInnervate's) strips FojjiCore's group prefix and any <tag> to the bare voice
+check(G.ShortPack("Flavour - Illidan") == "Illidan", "ShortPack strips the Flavour- prefix")
+check(G.ShortPack("Community - Fojji <Numen>") == "Fojji", "ShortPack strips Community- and the <Numen> tag")
+check(G.ShortPack("Arabella") == "Arabella", "a bare pack name is unchanged")
 check(not heard("SimonGame"), "and the motif stays quiet under him")
 played = {}; _G.__now = _G.__now + 1
 G.Sound.Play("tick3", 3)

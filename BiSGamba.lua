@@ -181,6 +181,18 @@ local VOICE_LINE = {
 }
 local VOICE_PREFER = "Illidan"   -- TBC flavour: "auto" leans to the Betrayer when he is installed
 
+-- FojjiCore groups its packs with a prefix ("Flavour - Illidan", "Community -
+-- Fojji <Numen>", "Chinese - Stacy"). Strip that group prefix and any trailing
+-- "<...>" tag down to the bare voice name, so we can prefer a pack by short name.
+-- This is BiSInnervate's Sound:ShortPack, kept identical so the family agrees.
+local function ShortPack(name)
+  name = tostring(name or "")
+  name = name:gsub("^%s*%a[%a]-%s*%-%s*", "")   -- drop "Flavour - " / "Community - " / "Chinese - " ...
+  name = name:gsub("%s*<[^>]*>%s*$", "")         -- drop a trailing "<Numen>" / "<who>"
+  return (name:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+G.ShortPack = ShortPack
+
 local Sound = { last = {}, quiet = false, picked = {}, voice = {} }
 G.Sound = Sound
 
@@ -203,8 +215,8 @@ local function VoicePack()
     if db2 and db2.ttsVoiceType == "custom" and db2.ttsVoicePack
        and packs and packs[db2.ttsVoicePack] then return db2.ttsVoicePack end
     if order then
-      -- 2. our preferred flavour, matched by name across FojjiCore's prefixes
-      for _, n in ipairs(order) do if n:lower():find(VOICE_PREFER:lower(), 1, true) then return n end end
+      -- 2. our preferred flavour, matched by SHORT name across FojjiCore's prefixes
+      for _, n in ipairs(order) do if ShortPack(n):lower() == VOICE_PREFER:lower() then return n end end
       -- 3. failing that, whatever it lists first (a real pack, never a stale name)
       return order[1]
     end
@@ -3299,7 +3311,7 @@ end
 local function VoiceShort(v)
   v = v or "auto"
   if v == "off" or v == "auto" then return v end
-  return (tostring(v):gsub("^%a[%a%s]-%-%s*", ""))   -- drop a "Community - " style prefix
+  return ShortPack(v)
 end
 function Own.voice(i)
   local l = VoiceList()
