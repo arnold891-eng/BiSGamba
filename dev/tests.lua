@@ -49,6 +49,13 @@ function Frame:GetStringWidth()
   local t = tostring(self.text_ or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
   return #t * (self.size or 9) * 0.6
 end
+-- the shared Options kit reads height back after Fit, so SetHeight must stick
+function Frame:SetHeight(h) self.h = h end
+function Frame:SetWidth(w) self.w = w end
+function Frame:GetHeight() return self.h end
+function Frame:SetTextColor() end
+function Frame:SetAllPoints() end
+function Frame:ClearAllPoints() end
 function Frame:SetEnabled(v) self.enabled = v and true or false end
 function Frame:SetChecked(v) self.checked = v and true or false end
 function Frame:GetChecked() return self.checked end
@@ -180,8 +187,22 @@ STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
 if not GetAddOnMetadata then function GetAddOnMetadata() return "9.9.9-toc" end end
 -- globals LibBiSComm can reach for (all guarded on its side); enough to boot and,
 -- if a test drives it, answer WHERE/SUM without erroring
-function IsInGroup() return inRaid end
+LE_PARTY_CATEGORY_INSTANCE = 2
+function IsInGroup(cat) if cat == LE_PARTY_CATEGORY_INSTANCE then return false end return inRaid end
 function UnitPosition() return 100, 200, 0, 1 end
+-- addon-loaded + spell-name stubs the rez emitter (RezComm) reaches for
+local loadedAddons = { BiSGamba = true }        -- BiSInnervate NOT loaded in the base run
+function IsAddOnLoaded(n) return loadedAddons[n] == true end
+local SPELLNAME = {
+  [2006] = "Resurrection", [2010] = "Resurrection", [10880] = "Resurrection",
+  [10881] = "Resurrection", [20770] = "Resurrection", [25435] = "Resurrection",
+  [7328] = "Redemption", [10322] = "Redemption", [10324] = "Redemption",
+  [20772] = "Redemption", [20773] = "Redemption",
+  [2008] = "Ancestral Spirit", [20609] = "Ancestral Spirit", [20610] = "Ancestral Spirit",
+  [20776] = "Ancestral Spirit", [20777] = "Ancestral Spirit", [25590] = "Ancestral Spirit",
+  [116] = "Frostbolt", [20484] = "Rebirth", [20739] = "Rebirth",
+}
+function GetSpellInfo(id) return SPELLNAME[id] or ("Spell" .. tostring(id)) end
 function IsInInstance() return false, "none" end
 function GetInstanceInfo() return "Azeroth", "none", 0, "", 0, 0, false, 0, 0 end
 function GetZoneText() return "Orgrimmar" end
@@ -194,7 +215,9 @@ function pcall_(f, ...) return pcall(f, ...) end
 -- the TOC loads the embedded libs first, then the addon - do the same, so the
 -- real header console and the shared BiS channel are under test, not fallbacks.
 assert(loadfile("Libs/BiSTheme/Console.lua"))()
+assert(loadfile("Libs/BiSTheme/Options.lua"))()
 assert(loadfile("Libs/LibBiSComm-1.0/LibBiSComm-1.0.lua"))()
+assert(loadfile("Libs/RezComm-1.0/RezComm-1.0.lua"))()
 local chunk = assert(loadfile("BiSGamba.lua"))
 chunk("BiSGamba")
 local G = BiSGamba
@@ -1327,36 +1350,77 @@ SlashCmdList.BISGAMBA("sound"); SlashCmdList.BISGAMBA("sound")
 SlashCmdList.BISGAMBA("reset")
 _G.__now = 1000
 
----------------------------------------------------------------- the options window
+---------------------------------------------------------------- the options window (shared BiSTheme/Options kit)
 SlashCmdList.BISGAMBA("reset"); G.UI:Show()
+local OPT = _G.BiSTheme.OPTIONS
+-- the kit itself: exactly four control kinds
+do local n = 0; for _ in pairs(_G.BiSTheme.OptionKinds) do n = n + 1 end
+  check(n == 4, "the kit carries exactly four control kinds: " .. n) end
+-- the window is built from the option list and opens
 SlashCmdList.BISGAMBA("config")
-check(G.UI.Cfg.built and G.UI.Cfg.frame.shown, "options window opens")
--- tabs switch
-G.UI:ShowConfigTab("Sound")
-check(G.UI.Cfg.tab == "Sound" and G.UI.Cfg.pages.Sound.shown and not G.UI.Cfg.pages.Table.shown, "tabs switch pages")
--- a checkbox writes the setting
-BiSGambaDB.autoJoin = false
-G.UI:ConfigSet("autojoin", true)
-check(BiSGambaDB.autoJoin == true, "a checkbox writes db")
-check(G.UI:ConfigGet("autojoin") == true, "and reads it back")
-G.UI:ConfigSet("autojoin", false)
-check(BiSGambaDB.autoJoin == false, "and clears it")
--- a slider writes the setting
-G.UI:ConfigSet("scale", 1.5)
-check(math.abs((BiSGambaDB.scale or 0) - 1.5) < 0.001, "a slider writes db: " .. tostring(BiSGambaDB.scale))
-G.UI:ConfigSet("wager", 250)
-check(BiSGambaDB.wager == 250, "the wager slider writes db")
--- a segmented control writes the setting
-G.UI:ConfigSet("view", "3d")
-check(BiSGambaDB.view == "3d", "a segmented control writes db")
-G.UI:ConfigSet("scope", "all")
-check(BiSGambaDB.boardScope == "all", "scope segmented writes db")
-G.UI:ConfigSet("scope", "guild")
--- every control id exists
-for _, id in ipairs({ "wager","flat","lastCall","grace","remind","autojoin","announce","scope","whisper","autocopy","wipemine","wipeall","sound","channel","soundtest","view","scale","portrait","minimap","combat","popup","neveropen" }) do
-  check(G.UI.Cfg.controls[id] ~= nil, "control exists: " .. id)
+local opt = G.UI.opt
+check(opt ~= nil and opt:IsShown(), "options window opens")
+check(opt:GetWidth() == OPT.W, "it stays narrow: " .. tostring(opt:GetWidth()))
+check(opt:GetHeight() == OPT.HEADER + #opt.rows * OPT.ROW + OPT.PAD, "height is header + rows + pad: " .. tostring(opt:GetHeight()))
+local function rowFor(label) for _, r in ipairs(opt.rows) do if r.opt and r.opt.label == label then return r end end end
+local function fireC(ctl) ctl.scripts.OnClick(ctl) end
+-- every label fits its budget, and a short one was not trimmed
+for _, r in ipairs(opt.rows) do
+  local budget = r.isSection and (OPT.W - 6 - OPT.CTL) or (OPT.W - OPT.INDENT - OPT.CTL)
+  check(r.name:GetStringWidth() <= budget, "label fits budget: " .. tostring(r.name:GetText()))
+  if r.opt then check(not tostring(r.name:GetText()):find("%.%.%.$"), "short label not trimmed: " .. tostring(r.name:GetText())) end
 end
-G.UI.Cfg.frame:Hide()
+-- a toggle round-trips AND fires its side effect (the minimap button hides)
+if not G.Minimap.button then G.Minimap.button = newFrame("Button") end
+local mini = rowFor("minimap button")
+BiSGambaDB.minimap = true; mini.paint(); G.Minimap.button:Show()
+fireC(mini.ctl)
+check(BiSGambaDB.minimap == false and not G.Minimap.button.shown, "toggle writes db AND hides the minimap button")
+fireC(mini.ctl)
+check(BiSGambaDB.minimap == true and G.Minimap.button.shown, "and back on, the button shows")
+-- a seg writes the value and lights the live one
+local view = rowFor("portraits")
+fireC(view.ctl[2])
+check(BiSGambaDB.view == "3d" and view.ctl[2].edge.name == "accent" and view.ctl[1].edge.name == "edge", "seg writes db and lights the live one")
+fireC(view.ctl[1]); check(BiSGambaDB.view == "2d", "and back")
+-- a step clamps at both ends (the stepper clamps, not the setter)
+local wager = rowFor("default roll range")
+BiSGambaDB.wager = 100; wager.paint()
+fireC(wager.ctl.plus); check(BiSGambaDB.wager == 110, "> steps the wager up")
+fireC(wager.ctl.minus); check(BiSGambaDB.wager == 100, "< steps it down")
+for _ = 1, 200 do fireC(wager.ctl.plus) end
+check(BiSGambaDB.wager == 1000, "the stepper clamps at max")
+for _ = 1, 300 do fireC(wager.ctl.minus) end
+check(BiSGambaDB.wager == 10, "and at min")
+-- a step with a live side effect: window scale calls SetScale
+G.UI.frame.SetScale = function(self, v) self.scale_ = v end
+local scale = rowFor("window scale")
+BiSGambaDB.scale = 1; scale.paint()
+fireC(scale.ctl.plus)
+check(math.abs((BiSGambaDB.scale or 0) - 1.05) < 0.001 and math.abs((G.UI.frame.scale_ or 0) - 1.05) < 0.001, "scale writes db AND calls SetScale")
+-- a seg with a rebuild side effect
+local board = rowFor("board")
+fireC(board.ctl[2]); check(BiSGambaDB.boardScope == "all", "board seg writes scope")
+fireC(board.ctl[1]); check(BiSGambaDB.boardScope == "guild", "and back")
+-- a button fires its action (reset recenters the table window)
+BiSGambaDB.x = 999
+fireC(rowFor("reset window position").ctl)
+check(BiSGambaDB.x == 0 and BiSGambaDB.point == "CENTER", "reset button recenters the table window")
+-- the header is a prompt and it fits its budget
+check(opt.con ~= nil and opt.con:Width() <= OPT.W - 15 - 8, "the header is a BiS> prompt within budget")
+-- chat stays clean through a round of clicks - it all goes to the prompt
+local optChatBefore = #chat
+fireC(mini.ctl); fireC(mini.ctl); fireC(view.ctl[1]); fireC(wager.ctl.plus); fireC(rowFor("reset window position").ctl)
+check(#chat == optChatBefore, "not one chat line through a round of options clicks")
+-- an over-long label is trimmed to the budget (the ellipsis is the net, not the plan)
+opt:Row({ kind = "toggle", label = "an absurdly long option label that nobody would ever actually use in here",
+  get = function() return false end, set = function() end }, BiSGambaDB)
+local longRow = opt.rows[#opt.rows]
+check(tostring(longRow.name:GetText()):find("%.%.%.$") and longRow.name:GetStringWidth() <= OPT.W - OPT.INDENT - OPT.CTL,
+  "an over-long label is trimmed to the budget, not merely trimmed")
+-- a fifth control kind is a crash, not a blank row
+check(not pcall(function() opt:Row({ kind = "slider", label = "nope" }, BiSGambaDB) end), "a fifth control kind is refused outright")
+opt:Toggle(false)
 SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- the BiS> header prompt
@@ -1432,6 +1496,64 @@ for _, cmd in ipairs({ "sound", "autojoin", "quiet", "whisper", "combat", "never
 end
 check(gatedBy == nil, "no feature toggle touches the shared channel (gated by: " .. tostring(gatedBy) .. ")")
 SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- the rez emitter (RezComm, on the BiSInn pipe)
+local rez = _G.BiSRezComm
+check(rez ~= nil and rez.MINOR == 1, "RezComm is embedded")
+local function ev(...) rez._frame.scripts.OnEvent(rez._frame, ...) end
+local RID = 2006                                  -- Resurrection rank 1
+rez._booted = false; rez.standDown = nil; rez.pending = nil; rez.sent = {}
+rez:Boot()
+check(not rez.standDown and rez._frame, "with no BiSInnervate it hooks the cast events")
+-- a rez cast start claims the corpse, on BiSInn, proto 4
+rez.sent = {}
+ev("UNIT_SPELLCAST_SENT", "player", "Gnomerpills", "castA", RID)
+check(rez.last == "4|RCLAIM|Gnomerpills", "a rez cast claims the corpse (proto 4): " .. tostring(rez.last))
+-- it lands
+ev("UNIT_SPELLCAST_SUCCEEDED", "player", "castA", RID)
+check(rez.last == "4|RDONE|Gnomerpills" and rez.pending == nil, "a landed rez says RDONE: " .. tostring(rez.last))
+-- a fresh cast, interrupted, frees the corpse
+ev("UNIT_SPELLCAST_SENT", "player", "Cashmeowside", "castB", RID)
+ev("UNIT_SPELLCAST_INTERRUPTED", "player", "castB", RID)
+check(rez.last == "4|RFREE|Cashmeowside" and rez.pending == nil, "an interrupted rez frees it: " .. tostring(rez.last))
+-- a failed cast frees it too
+ev("UNIT_SPELLCAST_SENT", "player", "Gnomerpills", "castB2", RID)
+ev("UNIT_SPELLCAST_FAILED", "player", "castB2", RID)
+check(rez.last == "4|RFREE|Gnomerpills" and rez.pending == nil, "a failed rez frees it")
+-- a NON-rez cast (Frostbolt) says nothing
+rez.sent = {}
+ev("UNIT_SPELLCAST_SENT", "player", "Gnomerpills", "castC", 116)
+check(#rez.sent == 0 and rez.pending == nil, "a non-rez cast says nothing: " .. tostring(rez.last))
+-- Rebirth is deliberately excluded - a druid's combat rez is not announced
+rez.sent = {}
+ev("UNIT_SPELLCAST_SENT", "player", "Gnomerpills", "castRB", 20484)
+check(#rez.sent == 0 and not rez.IsRez(20484), "Rebirth is excluded, on purpose")
+-- a stray interrupt (a DIFFERENT cast) must not free the rez claim (the v2.3 scar)
+rez.sent = {}
+ev("UNIT_SPELLCAST_SENT", "player", "Winterpup", "castD", RID)
+ev("UNIT_SPELLCAST_INTERRUPTED", "player", "someOtherCast", 116)
+check(rez.pending and rez.last == "4|RCLAIM|Winterpup", "a stray interrupt does not free the claim: " .. tostring(rez.last))
+ev("UNIT_SPELLCAST_STOP", "player", "castD", RID)             -- clear that pending
+-- another player's cast is not ours to announce
+rez.sent = {}
+ev("UNIT_SPELLCAST_SENT", "party1", "Gnomerpills", "castE", RID)
+check(#rez.sent == 0, "someone else's cast is not announced")
+-- announce-only: sent immediately (no jitter timer), and it never listens
+local timersBefore = #timers
+rez.sent = {}
+ev("UNIT_SPELLCAST_SENT", "player", "Gnomerpills", "castF", RID)
+check(#timers == timersBefore and rez.last == "4|RCLAIM|Gnomerpills", "a claim is sent immediately, never on a jittered timer")
+ev("UNIT_SPELLCAST_STOP", "player", "castF", RID)
+check(not rez._frame.events.CHAT_MSG_ADDON, "it registers no receive handler - announce-only")
+check(rez.IsRez(2006) and rez.IsRez(7328) and rez.IsRez(2008) and not rez.IsRez(116), "IsRez covers priest/paladin/shaman, not a nuke")
+-- STAND DOWN when BiSInnervate is installed (it announces its own casts)
+loadedAddons.BiSInnervate = true
+_G.BiSRezComm = nil
+assert(loadfile("Libs/RezComm-1.0/RezComm-1.0.lua"))()
+local rez2 = _G.BiSRezComm
+rez2:Boot()
+check(rez2.standDown and not rez2._frame, "with BiSInnervate present the emitter stands down (no double claims)")
+loadedAddons.BiSInnervate = nil
 
 ---------------------------------------------------------------- combat gets the window out of the way
 SlashCmdList.BISGAMBA("reset")
