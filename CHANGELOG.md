@@ -1,6 +1,20 @@
 # BiS Gamba - Changelog
 
-## 1.2.0
+## 1.3.0
+
+- **Streaks over the head.** A seat on a run wears a badge from the shared round
+  ledger - **W2**+ in gold for a win streak, **L2**+ in warn-pink for a lose
+  streak, shown once you're two deep. Only a real result counts: a win is topping
+  the roll, a loss is paying the gamble - everyone in the middle is neither, and
+  never tracked. It follows your board scope, so a pug night doesn't touch the
+  guild streaks.
+- **The table reacts to the extremes.** Roll a **1** and you cry while the rest of
+  the table laughs at you; roll the **max** and you flex while they cheer. An
+  ordinary roll is still just your own little reaction - the whole table only
+  moves for a 1 or a max.
+- **Fix: debt text no longer bleeds onto the footer.** A long "owes 1g to
+  <name>" under a seat wraps to a few lines; the seat now reserves room for all
+  of them, so it stops overlapping the **sound** row along the bottom.
 
 - **New options window.** The settings panel is now the shared BiS options window
   - one narrow flat panel with sections and simple controls (toggles, pickers,

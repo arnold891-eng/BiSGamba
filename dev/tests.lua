@@ -378,6 +378,10 @@ check(G.Game.state == "TIE" and G.Game.tieKind == "low", "low tie only")
 fire("CHAT_MSG_SYSTEM", "Kumlust rolls 50 (1-100)")
 fire("CHAT_MSG_SYSTEM", "Gnomerpills rolls 2 (1-100)")
 check(G.Game.result and G.Game.result.winner == "Cashmeowside" and G.Game.result.loser == "Gnomerpills" and G.Game.result.amount == 80, "low tie pays this round's high")
+-- a low tie never books TWO losers: the other low-roller is rerolled out, not charged.
+-- the round carries exactly one loser field, so only one player can ever take the loss.
+check(G.Game.result.loser == "Gnomerpills" and G.Game.result.loser ~= "Kumlust", "the co-low-roller is not booked as a second loser")
+check(type(G.Game.result.loser) == "string", "a round has one loser, not a list")
 for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then end end
 
 ---------------------------------------------------------------- the window says it in English
@@ -1572,6 +1576,71 @@ G.UI:Layout()
 check(G.UI.frame.h > emptyH, "the table grows as people join (empty " .. tostring(emptyH) .. " -> seated " .. tostring(G.UI.frame.h) .. ")")
 SlashCmdList.BISGAMBA("reset"); G.UI:Layout()
 check(math.abs(G.UI.frame.h - emptyH) < 1, "and shrinks back to the short empty strip when it clears")
+
+---------------------------------------------------------------- win/lose streaks from the ledger
+SlashCmdList.BISGAMBA("reset")
+BiSGambaDB.rounds = {}; BiSGambaDB.boardScope = "all"
+local function rnd(id, at, w, l, guild) BiSGambaDB.rounds[id] = { at = at, winner = w, loser = l, amount = 10, g = guild or "The Heathens" } end
+rnd("s1", 100, "Kumlust", "Gnomerpills")
+rnd("s2", 200, "Kumlust", "Cashmeowside")
+rnd("s3", 300, "Kumlust", "Gnomerpills")
+do local k, n = G.Streak("Kumlust"); check(k == "win" and n == 3, "three wins in a row: " .. tostring(k) .. " " .. tostring(n)) end
+do local k, n = G.Streak("Gnomerpills"); check(k == "lose" and n == 2, "and the repeat loser is on a lose streak: " .. tostring(k) .. " " .. tostring(n)) end
+rnd("s4", 400, "Gnomerpills", "Kumlust")   -- Kumlust loses; his win run breaks
+do local k, n = G.Streak("Kumlust"); check(k == "lose" and n == 1, "a loss breaks the win run") end
+rnd("s5", 500, "Cashmeowside", "Winterpup")   -- Kumlust not in this round at all
+do local k, n = G.Streak("Kumlust"); check(k == "lose" and n == 1, "a round you were not in is skipped, the run is unchanged") end
+rnd("s6", 600, "Winterpup", "Kumlust")        -- Kumlust loses again
+do local k, n = G.Streak("Kumlust"); check(k == "lose" and n == 2, "two losses now - the skipped middle round did not reset it") end
+-- scope: a pug round in another guild does not count under the guild board
+BiSGambaDB.boardScope = "guild"
+rnd("s7", 700, "Kumlust", "Pug", "Some Pug Guild")   -- would be a win, but wrong guild
+do local k, n = G.Streak("Kumlust"); check(k == "lose" and n == 2, "a pug round does not count on the guild board") end
+BiSGambaDB.boardScope = "all"
+-- the streak is the TRAILING run, not the total count of that outcome
+BiSGambaDB.rounds = {}
+rnd("t1", 100, "Kumlust", "X"); rnd("t2", 200, "Kumlust", "X")   -- two wins
+rnd("t3", 300, "X", "Kumlust")                                    -- a loss breaks them
+rnd("t4", 400, "Kumlust", "X")                                    -- one win since
+do local k, n = G.Streak("Kumlust"); check(k == "win" and n == 1, "the streak is the trailing run (1), not the total wins (3)") end
+BiSGambaDB.rounds = {}
+SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- the streak badge over the seat (reads G.Streak, thresholds at 2)
+SlashCmdList.BISGAMBA("reset"); BiSGambaDB.rounds = {}; BiSGambaDB.boardScope = "all"
+SlashCmdList.BISGAMBA("start 100"); G.UI:Show()
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); fire("CHAT_MSG_RAID", "1", "Winterpup")
+local function bseat(nm) for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == nm then return s end end end
+-- Gnomer: two wins trailing; Kum: two losses trailing; Winter: a lone win (run of 1)
+rnd("b1", 100, "Gnomerpills", "Kumsecration"); rnd("b2", 200, "Gnomerpills", "Kumsecration")
+rnd("b3", 300, "Winterpup", "Someone")
+G.UI:Refresh()
+check(bseat("Gnomerpills").streak.shown and strip(bseat("Gnomerpills").streak.text_) == "W2", "a two-win seat shows a W2 badge")
+check(bseat("Gnomerpills").streak.text_:find("e5c04a", 1, true) ~= nil, "and the win badge is gold")
+check(bseat("Kumsecration").streak.shown and strip(bseat("Kumsecration").streak.text_) == "L2", "a two-loss seat shows an L2 badge")
+check(bseat("Kumsecration").streak.text_:find("f08cb0", 1, true) ~= nil, "and the lose badge is warn")
+check(not bseat("Winterpup").streak.shown, "a run of one is below the badge threshold - nothing over the head")
+SlashCmdList.BISGAMBA("reset"); BiSGambaDB.rounds = {}
+
+---------------------------------------------------------------- extreme-roll reactions (roll a 1 / roll the max)
+SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100"); G.UI:Show()
+fire("CHAT_MSG_RAID", "1", "Gnomerpills"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+G.UI:Refresh()
+local function seatOf(nm) for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == nm then return s end end end
+local A = G.ANIM
+-- a rolled 1: the roller cries, the rest of the table laughs at them
+G.UI:OnRoll("Gnomerpills", 1)
+check(seatOf("Gnomerpills").anim == A.cry, "a rolled 1 cries")
+check(seatOf("Kumsecration").anim == A.laugh, "and the rest of the table laughs at them")
+-- a rolled max: the roller flexes, the rest cheer
+G.UI:OnRoll("Gnomerpills", 100)
+check(seatOf("Gnomerpills").anim == A.flex, "a rolled max flexes")
+check(seatOf("Kumsecration").anim == A.cheer, "and the rest cheer them on")
+-- an ordinary roll is just a personal reaction, the table does not all react
+seatOf("Kumsecration").anim = A.stand
+G.UI:OnRoll("Gnomerpills", 50)
+check(seatOf("Kumsecration").anim == A.stand, "a middling roll does not move the whole table")
+SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- combat gets the window out of the way
 SlashCmdList.BISGAMBA("reset")
