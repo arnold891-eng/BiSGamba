@@ -1238,26 +1238,27 @@ played = {}; _G.__now = _G.__now + 1
 SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
 check(not heard("FojjiCore"), "without FojjiCore the cues stay musical")
 _G.FojjiCore = {
-  voicePackOrder = { "Arabella", "Carla", "Chinese - Stacy" },
+  voicePackOrder = { "Arabella", "Carla", "Flavour - Illidan", "Chinese - Stacy" },
   voicePacks = {
-    ["Arabella"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Arabella\\table.ogg",
-                     ["3"] = "Interface\\AddOns\\FojjiCore\\voice\\Arabella\\3.ogg",
-                     ["Safe"] = "Interface\\AddOns\\FojjiCore\\voice\\Arabella\\safe.ogg" },
+    ["Arabella"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Arabella\\table.ogg" },
     ["Carla"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Carla\\table.ogg" },
+    ["Flavour - Illidan"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Illidan\\table.ogg",
+                              ["3"] = "Interface\\AddOns\\FojjiCore\\voice\\Illidan\\3.ogg",
+                              ["Safe"] = "Interface\\AddOns\\FojjiCore\\voice\\Illidan\\safe.ogg" },
     ["Chinese - Stacy"] = { ["Table"] = "Interface\\AddOns\\FojjiCore\\voice\\Stacy\\table.ogg" },
   },
 }
 check(BiSGambaDB.voice == "auto", "voice is auto by default")
 played = {}; _G.__now = _G.__now + 1
 SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
-check(heard("Arabella\\table"), "auto picks our default pack once FojjiCore is loaded: " .. tostring(played[1]))
-check(not heard("SimonGame"), "and the motif stays quiet under her")
+check(heard("Illidan\\table"), "auto leans to Illidan (TBC flavour) even though it is not first: " .. tostring(played[1]))
+check(not heard("SimonGame"), "and the motif stays quiet under him")
 played = {}; _G.__now = _G.__now + 1
 G.Sound.Play("tick3", 3)
-check(heard("Arabella\\3"), "the countdown uses her numbers")
+check(heard("Illidan\\3"), "the countdown uses his numbers")
 played = {}; _G.__now = _G.__now + 1
 G.Sound.Play("tick", 7)
-check(not heard("Arabella") and heard("SimonGame"), "a number she lacks falls back to the note: " .. tostring(played[1]))
+check(not heard("Illidan") and heard("SimonGame"), "a number he lacks falls back to the note: " .. tostring(played[1]))
 played = {}; _G.__now = _G.__now + 1
 G.Sound.Play("lose")
 check(heard("SimonGame") or heard("kit:"), "a cue with no line falls back to the motif")
