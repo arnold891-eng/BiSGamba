@@ -111,6 +111,7 @@ local ANIM = {
   dance = 69, laugh = 70, kneel = 75, cry = 77, chicken = 78, beg = 79, applaud = 80,
   shout = 81, flex = 82, shy = 83, point = 84, salute = 113, roar = 74,
 }
+G.ANIM = ANIM   -- exposed so the harness can name the reactions
 -- how the people in between feel, from "nearly paid" to "nearly won"
 local MOOD = {
   { ANIM.kneel, ANIM.beg, ANIM.shy },          -- bottom third: sweating
@@ -598,6 +599,32 @@ function G.Board()
     return a.r.net > b.r.net
   end)
   return list
+end
+
+-- A player's current run from the round ledger, the same source and scope the
+-- board uses. Only a win (they had the top roll) or a loss (they paid) counts;
+-- a round they were neither in - a middle roller - is skipped and never breaks
+-- the run. Returns "win"/"lose"/nil and the length (0 when under a real streak).
+function G.Streak(name)
+  name = Bare(name)
+  local guildOnly = G.Scope() == "guild"
+  local myGuild = MyGuild()
+  local seq = {}
+  for _, rd in pairs(db.rounds) do
+    local counts = (not guildOnly) or (rd.g ~= nil and rd.g == myGuild)
+    if counts and rd.winner and rd.loser then
+      local out = (Bare(rd.winner) == name and "win") or (Bare(rd.loser) == name and "lose") or nil
+      if out then seq[#seq + 1] = { at = rd.at or 0, out = out } end
+    end
+  end
+  if #seq == 0 then return nil, 0 end
+  table.sort(seq, function(a, b) return a.at < b.at end)
+  local last = seq[#seq].out
+  local run = 0
+  for i = #seq, 1, -1 do
+    if seq[i].out == last then run = run + 1 else break end
+  end
+  return last, run
 end
 
 local function FindDebt(from, to)
@@ -2087,7 +2114,9 @@ local VIEWS = { "2d", "3d" }
 -- drawn in the art box - never the size of anything - so nothing moves under the
 -- mouse when you flip between them.
 local ROLL_H = 16        -- the roll number's own strip above the art
-local TEXT_H = 32        -- name + the two owe lines below the art
+local TEXT_H = 48        -- name + two owe lines: "owes 1g" / "to Kumlust" wraps
+                         -- to four lines at this cell width, so reserve for four -
+                         -- too little and the debt text spills onto the footer row
 local CELL_W = 48
 local ART_W, ART_H = 30, 38   -- compact portraits: the 3D models shrink with the cell
 local CELL_H = ROLL_H + ART_H + 6 + TEXT_H
@@ -2376,6 +2405,12 @@ local function MakeSeat(i, parent)
   crown:Hide()
   seat.crown = crown
 
+  -- a win/lose streak badge over the head, top-left (opposite the crown)
+  local streak = hit:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  streak:SetPoint("TOPLEFT", hit, "TOPLEFT", -3, 5)
+  streak:Hide()
+  seat.streak = streak
+
   -- the roll, in its own strip above the art
   local roll = cell:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   roll:SetPoint("TOP", cell, "TOP", 0, -1)
@@ -2441,11 +2476,19 @@ local function FillSeat(seat, p)
   seat.person = p
   if not p then
     seat.cell:Hide(); seat.artKey = nil
-    seat.aura:Hide(); seat.gild:Hide(); seat.crown:Hide()
+    seat.aura:Hide(); seat.gild:Hide(); seat.crown:Hide(); seat.streak:Hide()
     for _, t in ipairs(seat.flames) do t:Hide() end
     return
   end
   seat.cell:Show()
+  -- win/lose streak over the head, from the round ledger
+  local skKind, skRun = G.Streak(p.name)
+  if skRun >= 2 then
+    seat.streak:SetText(T.text(skKind == "win" and "gold" or "warn", (skKind == "win" and "W" or "L") .. skRun))
+    seat.streak:Show()
+  else
+    seat.streak:Hide()
+  end
   local winning, losing = p.name == topDog, p.name == underDog
   seat.aura:SetShown(winning)
   seat.gild:SetShown(winning and View() == "2d")
@@ -3222,9 +3265,19 @@ end
 function UI:OnRoll(name, roll)
   self:Refresh()
   local seat = SeatOf(name)
-  if not seat then return end
-  -- a quick reaction to your own number
   local n = Game.max
+  -- the whole table reacts to the extremes: a rolled 1 gets laughed at, a rolled
+  -- max gets cheered. Everyone else at the table joins in.
+  if roll == 1 or roll == n then
+    local you, them = (roll == 1) and ANIM.cry or ANIM.flex, (roll == 1) and ANIM.laugh or ANIM.cheer
+    if seat then self:Emote(seat, you, 4) end
+    for _, s in ipairs(self.seats) do
+      if s.person and s ~= seat then self:Emote(s, them, 4) end
+    end
+    return
+  end
+  if not seat then return end
+  -- otherwise just a quick reaction to your own number
   if roll >= n * 0.9 then self:Emote(seat, ANIM.exclaim, 3)
   elseif roll <= n * 0.1 then self:Emote(seat, ANIM.question, 3)
   else self:Emote(seat, ANIM.talk, 2) end
