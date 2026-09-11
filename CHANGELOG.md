@@ -1,5 +1,12 @@
 # BiS Gamba - Changelog
 
+## 1.3.1
+
+- **Shared BiS channel updated to lib minor 5** - a phantom "summon by someone"
+  no longer fires on bystanders when anyone else in the raid gets a summon (the
+  2.5.x client wakes every summoner's addon, not just the one being pulled). No
+  visible change to Gamba itself; it carries the fixed library for the raid.
+
 ## 1.3.0
 
 - **Streaks over the head.** A seat on a run wears a badge from the shared round
