@@ -42,6 +42,24 @@ foreach ($l in $lines) {
 }
 $changelog = ($entry -join "`n").Trim()
 
+# embedded libs must be byte-identical to their canonical copies, or a release
+# ships an old lib (10 Sep 2026: minor 4 still in three addons while minor 5
+# fixed the phantom summon). ..\_bisdev\sync.ps1 copies them; -Check just looks.
+$canon = @{
+    "Libs\LibBiSComm-1.0\LibBiSComm-1.0.lua" = "..\_bisdev\LibBiSComm-1.0\LibBiSComm-1.0.lua"
+    "Libs\RezComm-1.0\RezComm-1.0.lua"       = "..\_bisdev\RezComm-1.0\RezComm-1.0.lua"
+    "Libs\BiSTheme\Console.lua"              = "..\BiSTheme\Console.lua"
+}
+foreach ($k in $canon.Keys) {
+    $mine = Join-Path $Root $k
+    $ref  = Join-Path $Root $canon[$k]
+    if ((Test-Path $mine) -and (Test-Path $ref)) {
+        $a = (Get-FileHash $mine -Algorithm MD5).Hash
+        $b = (Get-FileHash $ref  -Algorithm MD5).Hash
+        if ($a -ne $b) { throw "embedded $k differs from its canonical copy - run ..\_bisdev\sync.ps1 first" }
+    }
+}
+
 # the zip: everything but dev/, .pkgmeta and the dot-files
 $zip = Join-Path $Downloads "$AddonName-$version.zip"
 $stage = Join-Path $env:TEMP "$AddonName-release"
