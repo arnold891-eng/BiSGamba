@@ -1,5 +1,10 @@
 # BiS Gamba - Changelog
 
+## 1.3.3
+
+- Shared console minor 4: the blinking cursor in the `BiS>` header is its own text now, so
+  the words beside it no longer shift a hair every half second.
+
 ## 1.3.2
 
 - Options window: Escape closes it (shared kit minor 2).
