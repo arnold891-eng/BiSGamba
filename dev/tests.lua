@@ -1484,6 +1484,10 @@ SlashCmdList.BISGAMBA("reset")
 ---------------------------------------------------------------- the shared BiS channel (LibBiSComm)
 local lib = _G.LibBiSComm
 check(lib ~= nil and lib.MINOR == 5, "LibBiSComm is embedded, minor 5: " .. tostring(lib and lib.MINOR))
+check(BiSTheme.OPTIONS_MINOR == 2, "options kit minor 2 (Escape closes): " .. tostring(BiSTheme.OPTIONS_MINOR))
+-- this suite loads the libs by hand (above), so it would stay green if the TOC dropped one - ask the TOC too
+do local toc = assert(io.open("BiSGamba.toc", "r")):read("*a")
+  check(toc:find("Libs\\BiSTheme\\Options.lua", 1, true) ~= nil, "the TOC lists Libs\\BiSTheme\\Options.lua (BiSTools 0.3.0 shipped without it)") end
 check(lib._booted, "it boots from PLAYER_LOGIN")
 check(lib.addons and lib.addons.BiSGamba == GetAddOnMetadata("BiSGamba", "Version"),
   "the addon is registered with its TOC version, not a literal: " .. tostring(lib.addons and lib.addons.BiSGamba))
@@ -1519,6 +1523,7 @@ do
     { "Libs/LibBiSComm-1.0/LibBiSComm-1.0.lua", "../_bisdev/LibBiSComm-1.0/LibBiSComm-1.0.lua" },
     { "Libs/RezComm-1.0/RezComm-1.0.lua",       "../_bisdev/RezComm-1.0/RezComm-1.0.lua" },
     { "Libs/BiSTheme/Console.lua",              "../BiSTheme/Console.lua" },
+    { "Libs/BiSTheme/Options.lua",              "../BiSTheme/Options.lua" },
   }
   for _, pr in ipairs(pairs_) do
     local mine, ref = bytes(pr[1]), bytes(pr[2])
