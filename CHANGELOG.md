@@ -1,5 +1,11 @@
 # BiS Gamba - Changelog
 
+## 1.3.2
+
+- Options window: Escape closes it (shared kit minor 2).
+- Shared console minor 3: a header slot that toggles no longer hogs the rotation.
+- Harness asserts the options kit minor, the TOC line for it, and the bytes of every embed.
+
 ## 1.3.1
 
 - **Shared BiS channel updated to lib minor 5** - a phantom "summon by someone"
