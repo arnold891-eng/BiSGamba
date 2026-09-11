@@ -1483,7 +1483,7 @@ SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- the shared BiS channel (LibBiSComm)
 local lib = _G.LibBiSComm
-check(lib ~= nil and lib.MINOR == 3, "LibBiSComm is embedded, minor 3: " .. tostring(lib and lib.MINOR))
+check(lib ~= nil and lib.MINOR == 5, "LibBiSComm is embedded, minor 5: " .. tostring(lib and lib.MINOR))
 check(lib._booted, "it boots from PLAYER_LOGIN")
 check(lib.addons and lib.addons.BiSGamba == GetAddOnMetadata("BiSGamba", "Version"),
   "the addon is registered with its TOC version, not a literal: " .. tostring(lib.addons and lib.addons.BiSGamba))
@@ -1508,6 +1508,24 @@ for _, cmd in ipairs({ "sound", "autojoin", "quiet", "whisper", "combat", "never
 end
 check(gatedBy == nil, "no feature toggle touches the shared channel (gated by: " .. tostring(gatedBy) .. ")")
 SlashCmdList.BISGAMBA("reset")
+
+---------------------------------------------------------------- embedded libs are the canonical bytes
+-- The lib is edited in _bisdev and copied out; a stale copy in an addon is how three addons
+-- were still announcing phantom OFFERs after minor 5 fixed it. When the sibling folders are
+-- there (they are, in the AddOns tree), every embedded file must be byte-identical.
+do
+  local function bytes(path) local fh = io.open(path, "rb") if not fh then return nil end local b = fh:read("*a") fh:close() return b end
+  local pairs_ = {
+    { "Libs/LibBiSComm-1.0/LibBiSComm-1.0.lua", "../_bisdev/LibBiSComm-1.0/LibBiSComm-1.0.lua" },
+    { "Libs/RezComm-1.0/RezComm-1.0.lua",       "../_bisdev/RezComm-1.0/RezComm-1.0.lua" },
+    { "Libs/BiSTheme/Console.lua",              "../BiSTheme/Console.lua" },
+  }
+  for _, pr in ipairs(pairs_) do
+    local mine, ref = bytes(pr[1]), bytes(pr[2])
+    if ref then check(mine == ref, "embedded " .. pr[1] .. " is byte-identical to " .. pr[2] .. " (run _bisdev/sync.ps1)")
+    else print("   (canonical " .. pr[2] .. " not beside this checkout - embed check skipped)") end
+  end
+end
 
 ---------------------------------------------------------------- the rez emitter (RezComm, on the BiSInn pipe)
 local rez = _G.BiSRezComm
