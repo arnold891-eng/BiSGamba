@@ -214,14 +214,24 @@ function hooksecurefunc() end
 function pcall_(f, ...) return pcall(f, ...) end
 
 ---------------------------------------------------------------- load
--- the TOC loads the embedded libs first, then the addon - do the same, so the
--- real header console and the shared BiS channel are under test, not fallbacks.
-assert(loadfile("Libs/BiSTheme/Console.lua"))()
-assert(loadfile("Libs/BiSTheme/Options.lua"))()
-assert(loadfile("Libs/LibBiSComm-1.0/LibBiSComm-1.0.lua"))()
-assert(loadfile("Libs/RezComm-1.0/RezComm-1.0.lua"))()
-local chunk = assert(loadfile("BiSGamba.lua"))
-chunk("BiSGamba")
+-- the TOC is the loader (house standard, debt 13): every Lua line in BiSGamba.toc is loaded
+-- in order, exactly as the client does it. A lib the TOC forgot is then not under test here
+-- either - the way it would not exist in the game (BiSTools 0.3.0 shipped that way).
+local TOC = {}
+do
+  local fh = assert(io.open("BiSGamba.toc", "r"), "BiSGamba.toc must be beside the suite")
+  for line in fh:lines() do
+    line = line:gsub("\r$", "")
+    if line:match("%.lua%s*$") and not line:match("^#") then TOC[#TOC + 1] = (line:gsub("\\", "/"):gsub("%s+$", "")) end
+  end
+  fh:close()
+end
+assert(#TOC >= 2, "the TOC lists files")
+assert(TOC[#TOC] == "BiSGamba.lua", "the addon is the last TOC line")
+for _, f in ipairs(TOC) do
+  local fn = assert(loadfile(f), "TOC lists a file that does not exist: " .. f)
+  fn("BiSGamba")
+end
 local G = BiSGamba
 local ev
 for _, name in ipairs({ "BiSGambaFrame" }) do end
@@ -1485,7 +1495,7 @@ SlashCmdList.BISGAMBA("reset")
 local lib = _G.LibBiSComm
 check(lib ~= nil and lib.MINOR == 5, "LibBiSComm is embedded, minor 5: " .. tostring(lib and lib.MINOR))
 check(BiSTheme.OPTIONS_MINOR == 2, "options kit minor 2 (Escape closes): " .. tostring(BiSTheme.OPTIONS_MINOR))
--- this suite loads the libs by hand (above), so it would stay green if the TOC dropped one - ask the TOC too
+-- the loader IS the TOC now (above); this assert stays as the plain-English fence
 do local toc = assert(io.open("BiSGamba.toc", "r")):read("*a")
   check(toc:find("Libs\\BiSTheme\\Options.lua", 1, true) ~= nil, "the TOC lists Libs\\BiSTheme\\Options.lua (BiSTools 0.3.0 shipped without it)") end
 check(lib._booted, "it boots from PLAYER_LOGIN")
