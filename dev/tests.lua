@@ -1493,7 +1493,7 @@ SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- the shared BiS channel (LibBiSComm)
 local lib = _G.LibBiSComm
-check(lib ~= nil and lib.MINOR == 5, "LibBiSComm is embedded, minor 5: " .. tostring(lib and lib.MINOR))
+check(lib ~= nil and lib.MINOR == 6, "LibBiSComm is embedded, minor 6: " .. tostring(lib and lib.MINOR))
 check(BiSTheme.OPTIONS_MINOR == 2, "options kit minor 2 (Escape closes): " .. tostring(BiSTheme.OPTIONS_MINOR))
 -- the loader IS the TOC now (above); this assert stays as the plain-English fence
 do local toc = assert(io.open("BiSGamba.toc", "r")):read("*a")
