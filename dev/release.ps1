@@ -49,6 +49,7 @@ $canon = @{
     "Libs\LibBiSComm-1.0\LibBiSComm-1.0.lua" = "..\_bisdev\LibBiSComm-1.0\LibBiSComm-1.0.lua"
     "Libs\RezComm-1.0\RezComm-1.0.lua"       = "..\_bisdev\RezComm-1.0\RezComm-1.0.lua"
     "Libs\BiSTheme\Console.lua"              = "..\BiSTheme\Console.lua"
+    "Libs\BiSTheme\Options.lua"              = "..\BiSTheme\Options.lua"
 }
 foreach ($k in $canon.Keys) {
     $mine = Join-Path $Root $k
@@ -60,13 +61,14 @@ foreach ($k in $canon.Keys) {
     }
 }
 
-# the zip: everything but dev/, .pkgmeta and the dot-files
+# the zip: everything but dev/, CLAUDE.md, .git* (.git, .github, .gitignore, .gitattributes)
+# and this repo's local leftovers - desk debt 28, 16 Sep 2026
 $zip = Join-Path $Downloads "$AddonName-$version.zip"
 $stage = Join-Path $env:TEMP "$AddonName-release"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $stage $AddonName) | Out-Null
 Get-ChildItem $Root -Force | Where-Object {
-    $_.Name -notin @("dev", ".pkgmeta", ".git", ".gitignore", "LICENSE.bak")
+    $_.Name -notin @("dev", "CLAUDE.md", ".pkgmeta", "LICENSE.bak") -and $_.Name -notlike ".git*"
 } | ForEach-Object { Copy-Item $_.FullName -Destination (Join-Path $stage $AddonName) -Recurse }
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $stage $AddonName) -DestinationPath $zip
