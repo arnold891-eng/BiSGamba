@@ -3582,7 +3582,8 @@ end
 -- slash
 ----------------------------------------------------------------------------
 local function Help()
-  Print(T.text("accent", "BiS Gamba") .. " " .. T.text("muted", (GetAddOnMetadata and GetAddOnMetadata("BiSGamba", "Version")) or "") .. " - commands:")
+  Print(T.text("accent", "BiS Gamba") .. " " .. T.text("muted", ((C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("BiSGamba", "Version"))
+    or (GetAddOnMetadata and GetAddOnMetadata("BiSGamba", "Version")) or "")) .. " - commands:")
   local lines = {
     "/gamba              toggle the table",
     "/gamba start [N]    open a table, /roll N (default " .. tostring(db.wager) .. ")",
@@ -3817,7 +3818,8 @@ G.SharedComm = SharedComm
 function SharedComm.Boot()
   local lib = _G.LibBiSComm
   if not lib then return end
-  lib:RegisterAddon(ADDON, (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "dev")
+  lib:RegisterAddon(ADDON, (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
+    or (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "dev")
   if db and db.comm == false then lib:SetEnabled(false) end   -- restore the off switch
   lib:Boot()
 end
