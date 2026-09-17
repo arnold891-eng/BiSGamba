@@ -36,7 +36,7 @@
   embedder under Libs\, never edited in place.
 ]]
 
-local MAJOR, MINOR = "RezComm-1.0", 1
+local MAJOR, MINOR = "RezComm-1.0", 2
 local RC = _G.BiSRezComm
 if RC and (RC.MINOR or 0) >= MINOR then return end
 RC = RC or {}
@@ -61,15 +61,26 @@ for _, id in ipairs({
 -- Match by ID first. As a net, also match by the localized spell NAME resolved
 -- once from those IDs, so a rank whose id we missed is still caught - never match
 -- a hardcoded English string (that is how a non-English client silently misses).
+-- MINOR 2 (17 Sep 2026): the Forever beta (1.60.1.69893, TOC 16001) has no global
+-- GetSpellInfo - only C_Spell.GetSpellInfo, and THAT one answers with a table
+-- (info.name), not the name as the first return. Take the C_ one first, the global
+-- second, and read whichever shape came back.
+local function SpellName(id)
+  local getInfo = (C_Spell and C_Spell.GetSpellInfo) or GetSpellInfo
+  if not getInfo or not id then return nil end
+  local info = getInfo(id)
+  if type(info) == "table" then return info.name end
+  return info
+end
+RC.SpellName = SpellName
+
 local rezName
 local function RezNames()
   if rezName then return rezName end
   rezName = {}
-  if GetSpellInfo then
-    for id in pairs(REZ_ID) do
-      local n = GetSpellInfo(id)
-      if n then rezName[n] = true end
-    end
+  for id in pairs(REZ_ID) do
+    local n = SpellName(id)
+    if n then rezName[n] = true end
   end
   return rezName
 end
@@ -77,7 +88,7 @@ end
 local function IsRez(spellID)
   if not spellID then return false end
   if REZ_ID[spellID] then return true end
-  local n = GetSpellInfo and GetSpellInfo(spellID)
+  local n = SpellName(spellID)
   return (n and RezNames()[n]) and true or false
 end
 RC.IsRez = IsRez
@@ -175,10 +186,10 @@ end
 -- boot
 --------------------------------------------------------------------
 
+-- MINOR 2: C_AddOns first (Forever has no global IsAddOnLoaded), the global second
 local function InnervateLoaded()
-  if IsAddOnLoaded and IsAddOnLoaded("BiSInnervate") then return true end
-  if C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("BiSInnervate") then return true end
-  return false
+  local isLoaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+  return (isLoaded and isLoaded("BiSInnervate")) and true or false
 end
 
 function RC:Boot()
