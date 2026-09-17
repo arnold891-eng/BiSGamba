@@ -1544,7 +1544,7 @@ end
 
 ---------------------------------------------------------------- the rez emitter (RezComm, on the BiSInn pipe)
 local rez = _G.BiSRezComm
-check(rez ~= nil and rez.MINOR == 1, "RezComm is embedded")
+check(rez ~= nil and rez.MINOR == 2, "RezComm is embedded, minor 2")
 local function ev(...) rez._frame.scripts.OnEvent(rez._frame, ...) end
 local RID = 2006                                  -- Resurrection rank 1
 rez._booted = false; rez.standDown = nil; rez.pending = nil; rez.sent = {}
@@ -1599,6 +1599,39 @@ local rez2 = _G.BiSRezComm
 rez2:Boot()
 check(rez2.standDown and not rez2._frame, "with BiSInnervate present the emitter stands down (no double claims)")
 loadedAddons.BiSInnervate = nil
+
+-- RezComm minor 2: a Forever-shaped client (1.60.1.69895, TOC 16001) has no global
+-- GetSpellInfo or IsAddOnLoaded - only C_Spell.GetSpellInfo, which answers with a TABLE,
+-- and C_AddOns.IsAddOnLoaded. Load a fresh copy into that world and it must still work.
+do
+  local oldGetSpellInfo, oldIsAddOnLoaded = GetSpellInfo, IsAddOnLoaded
+  local askedC_Spell, askedC_AddOns = 0, 0
+  _G.GetSpellInfo, _G.IsAddOnLoaded = nil, nil
+  _G.C_Spell = { GetSpellInfo = function(id) askedC_Spell = askedC_Spell + 1; return { name = SPELLNAME[id] } end }
+  _G.C_AddOns = { IsAddOnLoaded = function(n) askedC_AddOns = askedC_AddOns + 1; return loadedAddons[n] == true end }
+  _G.BiSRezComm = nil
+  assert(loadfile("Libs/RezComm-1.0/RezComm-1.0.lua"))()
+  local modern = _G.BiSRezComm
+  check(modern.SpellName(2006) == "Resurrection", "C_Spell.GetSpellInfo's table is read for the name")
+  check(askedC_Spell > 0, "and the C_ one is what was asked")
+  check(modern.IsRez(2006) and modern.IsRez(20777) and not modern.IsRez(116),
+    "IsRez still tells a rez from a nuke with no global GetSpellInfo")
+  modern._booted = nil
+  modern:Boot()
+  check(askedC_AddOns > 0 and not modern.standDown, "C_AddOns.IsAddOnLoaded answers the stand-down question")
+  loadedAddons.BiSInnervate = true
+  _G.BiSRezComm = nil
+  assert(loadfile("Libs/RezComm-1.0/RezComm-1.0.lua"))()
+  local modern2 = _G.BiSRezComm
+  modern2:Boot()
+  check(modern2.standDown, "and it still stands down for Innervate on that client")
+  loadedAddons.BiSInnervate = nil
+  _G.C_Spell, _G.C_AddOns = nil, nil
+  _G.GetSpellInfo, _G.IsAddOnLoaded = oldGetSpellInfo, oldIsAddOnLoaded
+  _G.BiSRezComm = nil
+  assert(loadfile("Libs/RezComm-1.0/RezComm-1.0.lua"))()
+  _G.BiSRezComm:Boot()
+end
 
 ---------------------------------------------------------------- the table starts small and grows
 SlashCmdList.BISGAMBA("reset"); G.UI:Show(); G.UI:Layout()
