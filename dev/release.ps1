@@ -96,11 +96,41 @@ $gv = $versions | Where-Object { $_.gameVersionTypeID -eq $tbcType.id } | Sort-O
 if (-not $gv) { throw "no game version under type $($tbcType.name)" }
 Write-Host "game version: $($gv.name) (id $($gv.id), type $($tbcType.name))"
 
+# WoW Forever. A TOC that lists 16001 ships for that client as well, so the upload has to carry its
+# CurseForge id too: the API takes CURSEFORGE'S OWN ids in gameVersions, never "1.60.1" and never an
+# interface number, and an upload with only the TBC id lands on the wrong flavour.
+#
+# Looked up live, with _bisdev/release/versions.json as the pinned record and the fallback for a
+# machine that cannot reach the API. Refresh it with _bisdev/release/fetch-versions.ps1 (Arn runs
+# that: the token never passes through Claude).
+$gameVersionIds = @($gv.id)
+$ifaceLine = @($toc | Where-Object { $_ -match '^##\s*Interface\s*:\s*(.+)$' } | ForEach-Object { $Matches[1] })
+if ($ifaceLine -and (($ifaceLine[0] -split '[,\s]+') -contains '16001')) {
+    $pin = Join-Path $PSScriptRoot "..\..\_bisdev\release\versions.json"
+    $typeId = 88568                      # the 1.60.x / Forever family on CurseForge
+    $pinnedId = $null
+    if (Test-Path $pin) {
+        $doc = Get-Content $pin -Raw | ConvertFrom-Json
+        if ($doc.typeId) { $typeId = [int]$doc.typeId }
+        if ($doc.forever -and $doc.forever.id) { $pinnedId = [int]$doc.forever.id }
+    }
+    $fv = $versions | Where-Object { $_.gameVersionTypeID -eq $typeId -and $_.name -like '1.60*' } |
+          Sort-Object name | Select-Object -Last 1
+    $foreverId = if ($fv) { [int]$fv.id } elseif ($pinnedId) { $pinnedId } else { $null }
+    if (-not $foreverId) {
+        throw "the TOC claims 16001 but CurseForge has no 1.60.x under type ${typeId}. Run _bisdev/release/fetch-versions.ps1 and commit versions.json"
+    }
+    if ($gameVersionIds -notcontains $foreverId) { $gameVersionIds += $foreverId }
+    if ($fv) { Write-Host "forever version: $($fv.name) (id $foreverId)" }
+    else     { Write-Host "forever version: id $foreverId (pinned in versions.json)" }
+}
+
+
 $metadata = @{
     changelog     = $changelog
     changelogType = "markdown"
     displayName   = "$AddonName $version"
-    gameVersions  = @($gv.id)
+    gameVersions  = @($gameVersionIds)
     releaseType   = $Type
 } | ConvertTo-Json -Compress
 
