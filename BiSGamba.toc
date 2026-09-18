@@ -1,4 +1,4 @@
-## Interface: 20506
+## Interface: 20506, 16001
 ## Title: BiS Gamba
 ## Notes: Lightweight high/low gold gambling for raid nights - shared table, debt ledger, one-click payouts, leaderboard.
 ## Author: Kumlust
