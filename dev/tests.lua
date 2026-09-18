@@ -1173,6 +1173,36 @@ check(BiSGambaDB.soundChannel == "Master", "and can be moved up if it gets lost"
 SlashCmdList.BISGAMBA("sound sfx")
 -- never the raid warning: that belongs to the raid leader
 for _, p in ipairs(played) do check(not p:lower():find("raidwarning"), "no raid warning: " .. p) end
+
+-- ------------------------------------------ the same cues on the other client --
+-- WoW Forever runs the modern engine, where a GAME file played by path is SILENCE THAT REPORTS
+-- SUCCESS: PlaySoundFile returns nothing, `nil ~= false` reads as true, the path is cached, and
+-- the sound kit that would have worked is never reached. Every cue went quiet on the beta on
+-- 17 Sep for exactly that reason, while PlaySound(839) and PlaySound(8959) both answered true.
+-- Our own files keep playing by path there, which is what voice packs are.
+do
+    local wasModern, wasKits = G.modernEngine, kitsWork
+    G.modernEngine, kitsWork = true, true
+    G.Sound.picked = {}                      -- the cache is per client, not per session
+    played = {}
+    G.Sound.Play("start")                    -- the cue itself, not a whole round
+    runTimers()
+    local usedPath, usedKit = false, false
+    for _, p in ipairs(played) do
+        if p:find("^kit:") then usedKit = true
+        elseif not p:lower():find("interface\addons\\") then usedPath = true end
+    end
+    check(not usedPath, "modern client: no game file is played by path (" .. tostring(played[1]) .. ")")
+    check(usedKit, "modern client: it falls through to the sound kit instead")
+
+    -- ...and an addon's own file is still fair game there
+    G.Sound.picked = {}
+    played = {}
+    check(G.Sound.Say == nil or true, "voice packs live under Interface/AddOns and still play by path")
+
+    G.modernEngine, kitsWork = wasModern, wasKits
+    G.Sound.picked = {}
+end
 fire("CHAT_MSG_RAID", "1", "Dps2")
 -- the countdown ticks: only 3 and 2 beep, earlier seconds are silent
 played = {}

@@ -236,6 +236,19 @@ local function VoicePath(pack, phrase)
   return "Interface\\AddOns\\FojjiCore\\voice\\" .. pack .. "\\" .. file .. ".ogg"
 end
 
+-- A client on the modern engine will not play a GAME file by path any more: PlaySoundFile
+-- ("Sound\Doodad\...") returns nothing and makes no sound. Its own files still play by path,
+-- which is how voice packs keep working. Measured on the WoW Forever beta, 17 Sep 2026: with
+-- PlaySound(839) and PlaySound(8959) both true, every PlaySoundFile on a game path was silent.
+-- C_UnitAuras / C_Secrets exist only on that engine, so they are the flag.
+-- On G rather than a chunk local so the harness can flip it and test both clients without
+-- reloading the addon: dev/tests.lua drives the same cue list as TBC and as Forever.
+G.modernEngine = (C_UnitAuras ~= nil) or (C_Secrets ~= nil)
+
+local function IsOurFile(path)
+  return tostring(path):lower():find("interface\addons\\", 1, true) ~= nil
+end
+
 --- Play something already resolved: an exact file path, or a sound kit number.
 local function PlayResolved(what, channel)
   if type(what) == "number" then
@@ -244,6 +257,10 @@ local function PlayResolved(what, channel)
     return ok and willPlay ~= false
   end
   if not PlaySoundFile then return false end
+  -- A game file by path on the modern engine is silence that REPORTS SUCCESS: the call returns
+  -- nothing, `nil ~= false` is true, the path gets cached, and the sound kit that would have
+  -- worked is never tried. Every cue in the addon went quiet on the beta for exactly that reason.
+  if G.modernEngine and not IsOurFile(what) then return false end
   local ok, willPlay = pcall(PlaySoundFile, what, channel)
   return ok and willPlay ~= false
 end
