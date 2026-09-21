@@ -3621,6 +3621,7 @@ local function Help()
     "/gamba rounds       the round ledger the leaderboard is built from",
     "/gamba rebuild      recompute the leaderboard from the ledger",
     "/gamba history      the last ten rounds",
+    "/gamba hidden       how often the game hid chat from the addon this session",
     "/gamba scope [guild|all]   whether pug rounds count on the board",
     "/gamba wipestats yes       throw away your ledger",
     "/gamba wipestats all       ask everyone with the addon to wipe theirs too",
@@ -3651,6 +3652,12 @@ local function Slash(msg)
   elseif cmd == "go" then UI:Show(); Game.StartRolls()
   elseif cmd == "call" or cmd == "lastcall" then UI:Show(); Game.LastCall(tonumber(rest))
   elseif cmd == "roll" then UI:Show(); Game.RollMe()
+  elseif cmd == "hidden" then
+    -- how often the game handed us chat we were not allowed to read (see Hidden, by the events)
+    local rows = {}
+    for e, n in pairs(G.hidden or {}) do rows[#rows + 1] = ("%s %d"):format(e, n) end
+    table.sort(rows)
+    Print(#rows == 0 and "no hidden chat this session" or ("hidden chat this session: " .. table.concat(rows, ", ")))
   elseif cmd == "end" or cmd == "settle" or cmd == "stop" then Game.End()
   elseif cmd == "add" and rest ~= "" then UI:Show(); Game.Add(Bare(rest))
   elseif cmd == "pay" then Trade.Pay(rest ~= "" and Bare(rest) or nil)
@@ -3858,7 +3865,37 @@ local CHAT = { CHAT_MSG_RAID = true, CHAT_MSG_RAID_LEADER = true, CHAT_MSG_PARTY
 local TRADE = { "TRADE_SHOW", "TRADE_CLOSED", "TRADE_REQUEST_CANCEL", "TRADE_MONEY_CHANGED",
   "PLAYER_TRADE_MONEY", "TRADE_ACCEPT_UPDATE", "UI_INFO_MESSAGE", "UI_ERROR_MESSAGE" }
 
+-- CHAT CAN BE A SECRET ON FOREVER. During a chat lockdown the client hands an addon the text of
+-- a message - and who sent it - as secret values: they can be painted, never read. Every line
+-- below reads them: a roll is pattern-matched, a "1" in raid chat compared, an addon message's
+-- prefix checked. On a secret each of those is an error, thrown at the worst moment - a roll in
+-- the middle of a boss fight. Seen in the field, not guessed: Ace3 r1403 (Aug 2026) "Fixed errors
+-- from secrets during chat lockdown", Prat checks issecretvalue on every line, and the client has
+-- C_ChatInfo.InChatMessagingLockdown() to say when it is happening.
+--
+-- So an event carrying a secret is dropped before anything looks at it, and counted - G.hidden
+-- is how often, per event, which is the measurement of when chat actually goes secret. A roll or
+-- a join lost that way during a round is said out loud, once per lockdown, so the table knows to
+-- roll again rather than wonder why a roll never counted.
+local function Hidden(v)
+  if v == nil or not issecretvalue then return false end
+  local ok, yes = pcall(issecretvalue, v)
+  return (ok and yes) and true or false
+end
+G.hidden = {}
+local toldHidden = false
+
 ev:SetScript("OnEvent", function(_, event, a1, a2, ...)
+  if Hidden(a1) or Hidden(a2) or Hidden((select(2, ...))) then
+    G.hidden[event] = (G.hidden[event] or 0) + 1
+    if not toldHidden and Game.Active() and (event == "CHAT_MSG_SYSTEM" or CHAT[event]) then
+      toldHidden = true
+      Print("the game is hiding chat right now - a roll or a 1 typed now cannot be counted."
+        .. " Roll again once it lets up.")
+    end
+    return
+  end
+  if toldHidden and (event == "CHAT_MSG_SYSTEM" or CHAT[event]) then toldHidden = false end
   if event == "ADDON_LOADED" then
     if a1 == ADDON then InitDB() end
   elseif event == "PLAYER_LOGIN" then
