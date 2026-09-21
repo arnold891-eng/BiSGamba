@@ -1,5 +1,15 @@
 # BiS Gamba - Changelog
 
+## 1.3.5
+
+- **No more errors from chat the game hides.** On WoW Forever the game can hide what is said in
+  chat from addons for a while - most likely during boss fights. Gamba reads rolls, the "1"s typed
+  to join and its own messages out of chat, and reading hidden text is an error. Now it skips
+  anything hidden instead.
+- **The table is told.** If that happens during a round, Gamba says once that rolls typed right
+  now cannot be counted, so everyone knows to roll again once it lets up.
+- **`/gamba hidden`** shows how often the game hid chat this session.
+
 ## 1.3.4
 
 - LibBiSComm minor 6: summon API moved to C_SummonInfo on 2.5.6 — the phantom-summon filter works again.
