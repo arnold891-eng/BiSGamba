@@ -309,6 +309,36 @@ fire("CHAT_MSG_SYSTEM", "Kumlust rolls 200 (1-200)")
 check(G.Game.players.Kumlust.roll == 150 and select(2, said[#said]:gsub("already rolled", "")) == 1 and not said[#said]:find("200 ·"), "told once, still 150")
 fire("CHAT_MSG_SYSTEM", "Dps2 rolls 20 (1-200)")
 fire("CHAT_MSG_SYSTEM", "Dps1 rolls 180 (1-200)")
+-- CHAT GOES SECRET during a chat lockdown on Forever: the text and the sender arrive as values
+-- that error on every read - a pattern match, a comparison, a concatenation. The mock errors the
+-- same way; issecretvalue is how the client lets an addon ask first.
+do
+  local boom = function() error("attempt to read a secret string", 2) end
+  local secretMeta = { __index = boom, __eq = boom, __lt = boom, __le = boom, __concat = boom,
+                       __len = boom, __tostring = boom, __call = boom }
+  local function secret() return setmetatable({}, secretMeta) end
+  local realIs = _G.issecretvalue
+  _G.issecretvalue = function(v) return getmetatable(v) == secretMeta end
+  local before = #chat
+  local ok1 = pcall(fire, "CHAT_MSG_SYSTEM", secret())
+  local ok2 = pcall(fire, "CHAT_MSG_RAID", secret(), "Dps4")
+  local ok3 = pcall(fire, "CHAT_MSG_RAID", "1", secret())
+  local ok4 = pcall(fire, "CHAT_MSG_ADDON", "BiSGamba", secret(), "RAID", "Dps2-Dreamscythe")
+  local ok5 = pcall(fire, "UI_ERROR_MESSAGE", 1, secret())
+  check(ok1 and ok2 and ok3 and ok4 and ok5, "a secret roll, chat line, sender, addon message or"
+    .. " trade message is dropped, not thrown")
+  check(G.hidden.CHAT_MSG_SYSTEM == 1 and G.hidden.CHAT_MSG_RAID == 2 and G.hidden.CHAT_MSG_ADDON == 1,
+    "and counted, which is the measurement of when chat goes secret")
+  local told = 0
+  for i = before + 1, #chat do if chat[i]:find("hiding chat") then told = told + 1 end end
+  check(told == 1, "mid-round, the table is told once that rolls cannot be counted: " .. told)
+  check(G.Game.state == "ROLL" and G.Game.players.Dps4 == nil and G.Game.players.Kumsecration.roll == nil,
+    "nothing about the round changed")
+  SlashCmdList.BISGAMBA("hidden")
+  check(lastChat():find("hidden chat this session") and lastChat():find("CHAT_MSG_RAID 2"),
+    "/gamba hidden reports the count: " .. lastChat())
+  _G.issecretvalue = realIs
+end
 -- somebody who never joined cannot buy in once the rolls are out, by any route
 fire("CHAT_MSG_SYSTEM", "Dps4 rolls 190 (1-200)")
 check(G.Game.players.Dps4 == nil, "a bystander's roll is ignored")
