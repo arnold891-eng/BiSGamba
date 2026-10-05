@@ -36,7 +36,7 @@
   embedder under Libs\, never edited in place.
 ]]
 
-local MAJOR, MINOR = "RezComm-1.0", 2
+local MAJOR, MINOR = "RezComm-1.0", 3
 local RC = _G.BiSRezComm
 if RC and (RC.MINOR or 0) >= MINOR then return end
 RC = RC or {}
@@ -97,10 +97,38 @@ RC.IsRez = IsRez
 -- send
 --------------------------------------------------------------------
 
+-- A NAME THE CLIENT WILL NOT LET US READ (5 Oct 2026, from Arn's own screen).
+--
+--     RezComm-1.0.lua:104: attempt to index local 'name' (a secret string value, while execution
+--     tainted by 'BiSGamba')
+--
+-- `UNIT_SPELLCAST_SENT` carries the name of whoever you are casting on, and on WoW Forever that
+-- name can be a SECRET VALUE. It is truthy, so `if not name` let it straight through - and the two
+-- calls in between did not help either: **`tostring()` and `Ambiguate()` both hand it back STILL
+-- SECRET**, so the error only arrived at the `:match`, four lines from where it could have been
+-- stopped. Nothing but `issecretvalue` catches one.
+--
+-- Third time this week the same shape has turned up underneath a guard built for it: BiSMemories
+-- 0.5.1 fixed it in CHAT_MSG_LOOT, LibBiSComm minor 7 fixed it on the wire yesterday, and here it
+-- was again in the other shared lib.
+--
+-- A nil is the honest answer: we do not know who that is. Every caller already handles not knowing,
+-- and a claim nobody can be named in is a claim worth dropping - better a resurrection that is not
+-- announced than an error in the middle of one.
 local function Short(name)
-  if not name then return nil end
-  name = tostring(name)
-  if Ambiguate then name = Ambiguate(name, "none") end
+  if name == nil then return nil end
+  if issecretvalue ~= nil and issecretvalue(name) == true then return nil end
+  if type(name) ~= "string" then
+    name = tostring(name)
+    -- tostring does not launder a secret on this client; ask again before touching it
+    if issecretvalue ~= nil and issecretvalue(name) == true then return nil end
+    if type(name) ~= "string" then return nil end
+  end
+  if Ambiguate then
+    local short = Ambiguate(name, "none")
+    if issecretvalue ~= nil and issecretvalue(short) == true then return nil end
+    if type(short) == "string" then name = short end
+  end
   return (name:match("^[^-]+")) or name
 end
 
