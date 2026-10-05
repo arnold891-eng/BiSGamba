@@ -1604,7 +1604,7 @@ end
 
 ---------------------------------------------------------------- the rez emitter (RezComm, on the BiSInn pipe)
 local rez = _G.BiSRezComm
-check(rez ~= nil and rez.MINOR == 2, "RezComm is embedded, minor 2")
+check(rez ~= nil and rez.MINOR == 3, "RezComm is embedded, minor 3")
 local function ev(...) rez._frame.scripts.OnEvent(rez._frame, ...) end
 local RID = 2006                                  -- Resurrection rank 1
 rez._booted = false; rez.standDown = nil; rez.pending = nil; rez.sent = {}
@@ -1612,6 +1612,37 @@ rez:Boot()
 check(not rez.standDown and rez._frame, "with no BiSInnervate it hooks the cast events")
 -- a rez cast start claims the corpse, on BiSInn, proto 4
 rez.sent = {}
+-- THE NAME YOU ARE CASTING ON CAN BE SECRET (5 Oct 2026, off Arn's own screen):
+--
+--   RezComm-1.0.lua:104: attempt to index local 'name' (a secret string value, while execution
+--   tainted by 'BiSGamba')
+--
+-- UNIT_SPELLCAST_SENT carries the target's NAME, and on Forever that is a value that errors when
+-- read. It is truthy, so `if not name` let it through - and tostring() and Ambiguate() both hand it
+-- back STILL SECRET, so the error arrived four lines later at the match.
+--
+-- The mock is built the same way the chat one above is: a value that errors on every read, with
+-- issecretvalue the only way to ask first. Driven through the real event, so this fails if the
+-- guard is taken out.
+do
+  local boom = function() error("attempt to read a secret string", 2) end
+  local secretMeta = { __index = boom, __eq = boom, __lt = boom, __le = boom, __concat = boom,
+                       __len = boom, __tostring = boom, __call = boom }
+  local realIs, realAmb = _G.issecretvalue, _G.Ambiguate
+  _G.issecretvalue = function(v) return getmetatable(v) == secretMeta end
+  -- the client's own Ambiguate hands a secret straight back; a mock that cleaned it would hide the bug
+  _G.Ambiguate = function(v) return v end
+
+  rez.sent, rez.pending = {}, nil
+  local okSecret = pcall(ev, "UNIT_SPELLCAST_SENT", "player", setmetatable({}, secretMeta), "castS", RID)
+  check(okSecret, "a secret cast target does not throw at the player")
+  check(rez.pending == nil, "and no claim is made on somebody we cannot name")
+  check(#rez.sent == 0, "and nothing goes out on the wire about them")
+
+  _G.issecretvalue, _G.Ambiguate = realIs, realAmb
+  rez.sent, rez.pending = {}, nil
+end
+
 ev("UNIT_SPELLCAST_SENT", "player", "Dps2", "castA", RID)
 check(rez.last == "4|RCLAIM|Dps2", "a rez cast claims the corpse (proto 4): " .. tostring(rez.last))
 -- it lands
