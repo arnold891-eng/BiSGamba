@@ -29,12 +29,27 @@ function Frame:Hide() self.shown = false end
 function Frame:IsShown() return self.shown end
 function Frame:IsVisible() return self.shown end
 function Frame:GetPoint() return "CENTER", nil, "CENTER", 10, 20 end
-function Frame:SetSize(w, h) self.w, self.h = w, h end
+-- wSet: the width was GIVEN (SetSize/SetWidth), not the mock's made-up 100. The fit check
+-- below trusts only a given width.
+function Frame:SetSize(w, h) self.w, self.h, self.wSet = w, h, true end
 function Frame:GetWidth() return self.w end
 function Frame:SetText(t) self.text_ = t end
 function Frame:GetText() return self.text_ end
 function Frame:CreateTexture() return newFrame("Texture", nil, self) end
-function Frame:CreateFontString() return newFrame("FontString", nil, self) end
+-- EVERY LABEL, KEPT, WITH ITS PARENT AND ITS FONT SIZE (6 Oct 2026, port of BiSTools' fit check).
+-- The template names a font object; the label takes that object's size the way the client
+-- does. Before, every label here was "9 pt" whatever it was made with. fitsIn() walks labels.
+local labels = {}
+function Frame:CreateFontString(name, _, template)
+  local fs = newFrame("FontString", name, self)
+  local fo = type(template) == "string" and _G[template]
+  if type(fo) == "table" and fo.size then fs.size = fo.size end
+  labels[#labels + 1] = fs
+  return fs
+end
+function Frame:SetFontObject(fo) if type(fo) == "table" and fo.size then self.size = fo.size end end
+-- the real client moves the frame; a no-op here left a moved button measured under its old parent
+function Frame:SetParent(p) self.parent = p end
 function Frame:CreateAnimationGroup() return newFrame("AnimationGroup", nil, self) end
 function Frame:CreateAnimation() return newFrame("Animation", nil, self) end
 function Frame:SetShown(v) self.shown = v and true or false end
@@ -51,12 +66,19 @@ function Frame:GetStringWidth()
 end
 -- the shared Options kit reads height back after Fit, so SetHeight must stick
 function Frame:SetHeight(h) self.h = h end
-function Frame:SetWidth(w) self.w = w end
+function Frame:SetWidth(w) self.w, self.wSet = w, true end
 function Frame:GetHeight() return self.h end
 function Frame:SetTextColor() end
-function Frame:SetAllPoints() end
--- record anchoring so a window left unanchored (opens off-screen) is a red test
-function Frame:SetPoint(point, rel) self.points = self.points or {}; self.points[#self.points + 1] = { point = point, rel = rel } end
+function Frame:SetAllPoints(rel) self.all = rel or true end
+-- record anchoring so a window left unanchored (opens off-screen) is a red test.
+-- The whole anchor is kept, in the client's forms: SetPoint(p) and SetPoint(p, x, y) are
+-- relative to the parent, relPoint = point; rel nil = parent; a name string = that frame.
+function Frame:SetPoint(point, rel, rp, x, y)
+  if type(rel) == "number" or (rel == nil and rp == nil) then rel, rp, x, y = nil, point, rel, rp end
+  if type(rel) == "string" then rel = _G[rel] end
+  self.points = self.points or {}
+  self.points[#self.points + 1] = { point = point, rel = rel, relPoint = rp or point, x = x or 0, y = y or 0 }
+end
 function Frame:ClearAllPoints() self.points = {} end
 function Frame:SetEnabled(v) self.enabled = v and true or false end
 function Frame:SetChecked(v) self.checked = v and true or false end
@@ -83,7 +105,14 @@ function StaticPopup_Show(key) popup = StaticPopupDialogs[key] end
 local function acceptPopup() if popup and popup.OnAccept then popup.OnAccept() end end
 SlashCmdList = {}
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) chat[#chat + 1] = strip(m) end }
-GameFontHighlightSmall = {}
+-- font objects with the client's default sizes (FrizQT; Blizzard's Fonts.xml): a label made
+-- from one is as big as it is in game, not the mock's old flat 9 pt
+local function fontObject(size)
+  return { size = size, GetFont = function() return STANDARD_TEXT_FONT, size, "" end }
+end
+GameFontNormal, GameFontNormalSmall, GameFontHighlightSmall = fontObject(12), fontObject(10), fontObject(10)
+GameFontNormalLarge, GameFontDisableSmall, NumberFontNormal = fontObject(16), fontObject(10), fontObject(14)
+GameFontNormalHuge = fontObject(20)
 RAID_CLASS_COLORS = { SHAMAN = { r = 0, g = 0.44, b = 0.87 }, MAGE = { r = 0.41, g = 0.8, b = 0.94 } }
 RANDOM_ROLL_RESULT = "%s rolls %d (%d-%d)"
 ERR_TRADE_COMPLETE = "Trade complete."
@@ -213,6 +242,94 @@ function GetSummonConfirmSummoner() return "" end
 function hooksecurefunc() end
 function pcall_(f, ...) return pcall(f, ...) end
 
+---------------------------------------------------------------- does every label FIT its window
+-- (6 Oct 2026, ported from BiSTools) Arn: "make a check for cut offs or overflows that happens
+-- often". Every shown label inside a window is measured where it actually lands - following what it
+-- is pinned to: the window's edge, a button, a seat, another label - and must end inside the window.
+--
+-- WIDTH, CALIBRATED ON THE CLIENT, NOT GUESSED (BiSTools, same numbers): capitals and digits 0.75 px
+-- per point, lowercase 0.55, spaces/punctuation 0.3; an inline |T..:w:h|t takes its width, colour
+-- escapes none. The mock's own GetStringWidth (0.6 flat) stays as it is: the Console and T.Fit trim
+-- by it, and changing it changes what the addon draws.
+local function realWidth(fs)
+  local t, tex = tostring(fs.text_ or ""), 0
+  t = t:gsub("|T[^|]-:(%d+):%d+[^|]*|t", function(w) tex = tex + tonumber(w) return "" end)
+  t = t:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+  local size, px = fs.size or 9, 0
+  for ch in t:gmatch(".") do
+    if ch:match("[%u%d]") then px = px + 0.75 elseif ch:match("%l") then px = px + 0.55 else px = px + 0.3 end
+  end
+  return px * size + tex
+end
+local function inside(r, root)
+  local p = r.parent
+  while p do if p == root then return true end p = p.parent end
+  return false
+end
+local function insideShown(r, root)
+  local p = r.parent
+  while p do
+    if p.shown == false then return false end
+    if p == root then return true end
+    p = p.parent
+  end
+  return false
+end
+local function side(point)
+  if point:find("LEFT") then return "L" elseif point:find("RIGHT") then return "R" end
+  return "C"
+end
+-- Left and right edge, px from the window's left, following every anchor. A frame or label pinned
+-- by a LEFT-ish AND a RIGHT-ish point is as wide as that span ("bounded"); one with a given width
+-- is that wide (bounded); a label with neither is as wide as its text. A FRAME that cannot be
+-- followed (no anchor, or one anchor and no width) spans the window, as BiSTools counts it; a
+-- LABEL that cannot be followed is not measured. Returns L, R, bounded.
+local function span(r, root, depth)
+  if r == root then return 0, root.w, true end
+  if depth > 12 or not inside(r, root) then return nil end
+  local isText = r.kind == "FontString"
+  if r.all then return span(r.all == true and r.parent or r.all, root, depth + 1) end
+  if not r.points or #r.points == 0 then if isText then return nil end return 0, root.w, true end
+  local L, R, C
+  for _, a in ipairs(r.points) do
+    local rl, rr = span(a.rel or r.parent, root, depth + 1)
+    if not rl then return nil end
+    local h = side(a.relPoint)
+    local ax = (h == "L" and rl or h == "R" and rr or (rl + rr) / 2) + (a.x or 0)
+    local own = side(a.point)
+    if own == "L" then L = ax elseif own == "R" then R = ax else C = ax end
+  end
+  if L and R then return L, R, true end
+  local w
+  if r.wSet then w = r.w elseif isText then w = realWidth(r)
+  else return 0, root.w, true end
+  if L then return L, L + w, r.wSet elseif R then return R - w, R, r.wSet end
+  return C - w / 2, C + w / 2, r.wSet
+end
+local function plainText(t) return (tostring(t):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+-- A BOUNDED label is measured against its box too: nothing here calls SetWordWrap/SetMaxLines, so
+-- a too-long text in a fixed box wraps onto the line below or ends in "..." - a cut off either way.
+local function fitsIn(root, what)
+  local width, bad, measured = root.w, {}, 0
+  for _, fs in ipairs(labels) do
+    if fs.shown ~= false and fs.text_ and plainText(fs.text_) ~= "" and insideShown(fs, root) then
+      local l, r, bounded = span(fs, root, 0)
+      if l then
+        measured = measured + 1
+        local w = realWidth(fs)
+        if l < -1 or r > width + 1 then
+          bad[#bad + 1] = ("%q needs %d px from %d, the window is %d"):format(plainText(fs.text_), r - l, l, width)
+        elseif bounded and w > (r - l) + 1 then
+          bad[#bad + 1] = ("%q needs %d px, its box is %d"):format(plainText(fs.text_), w, r - l)
+        end
+      end
+    end
+  end
+  check(measured > 0, what .. ": the fit check measured something (a check that sees nothing proves nothing)")
+  check(#bad == 0, what .. ": every label fits - " .. table.concat(bad, "; "))
+  return measured
+end
+
 ---------------------------------------------------------------- load
 -- the TOC is the loader (house standard, debt 13): every Lua line in BiSGamba.toc is loaded
 -- in order, exactly as the client does it. A lib the TOC forgot is then not under test here
@@ -291,6 +408,7 @@ fire("CHAT_MSG_RAID", "out", "Dps1"); check(G.Game.players.Dps1 == nil, "out lea
 fire("CHAT_MSG_RAID", "in", "Dps1"); check(G.Game.players.Dps1 ~= nil, "in joins")
 G.UI.startBtn.scripts.OnClick()
 check(G.Game.state == "ROLL", "rolling")
+fitsIn(BiSGambaFrame, "the table, rolls out")
 -- a roll in the wrong range is ignored, and the person is told once in chat
 fire("CHAT_MSG_SYSTEM", "Kumlust rolls 99 (1-100)")
 check(G.Game.players.Kumlust.roll == nil, "wrong range ignored")
@@ -357,6 +475,7 @@ local res = G.Game.result
 check(res and res.winner == "Dps1" and res.loser == "Dps2" and res.amount == 160, "high 180 low 20 -> 160g")
 check(said[#said]:find("Dps2 owes Dps1 160g"), "result announced: " .. said[#said])
 check(#BiSGambaDB.debts == 1 and BiSGambaDB.debts[1].amount == 160, "ledger has the debt")
+fitsIn(BiSGambaFrame, "the table, round settled")
 runTimers()
 local function sent(op) for _, m in ipairs(addon) do if m:find("^" .. op) then return m end end end
 check(sent("OPEN\t200") and sent("JOIN\tDps2") and sent("GO") and sent("ROLL\tDps1\t180") and sent("DONE\tDps1\tDps2\t160\t180\t20"), "host broadcast the round")
@@ -427,6 +546,7 @@ for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" 
 ---------------------------------------------------------------- the window says it in English
 G.UI:Show()
 G.UI:ToggleDebts(); G.UI:Refresh()
+fitsIn(BiSGambaFrame, "the table with the debts open")
 local rows = {}
 for _, r in ipairs(G.UI.rows) do if r.shown and r.text.text_ then rows[#rows + 1] = strip(r.text.text_) end end
 local mineRow
@@ -537,6 +657,7 @@ fire("TRADE_SHOW"); runTimers()
 G.Trade.Pay(); runTimers()
 check(chat[#chat]:find("Ctrl%+C"), "points at the copy box: " .. lastChat())
 check(G.Trade.panel and G.Trade.panel.shown, "falls back to the panel")
+fitsIn(BiSGambaTradePanel, "the trade panel, I owe")
 check(G.Trade.panel.amount.text_ == "9", "copy box holds the bare number: " .. tostring(G.Trade.panel.amount.text_))
 check(G.Trade.panel.amount.text_:match("^%d+$"), "nothing in it but digits, so it pastes clean")
 -- editing it snaps back: it is a display, not an input
@@ -1122,6 +1243,7 @@ check(G.UI.boardPanel.shown and G.UI.boardRows[1].shown, "leaderboard panel open
 check(strip(G.UI.boardRows[1].name.text_):find("Kumlust"), "top of the board: " .. strip(G.UI.boardRows[1].name.text_))
 check(strip(G.UI.boardRows[1].net.text_) == "+500g", "and their net: " .. strip(G.UI.boardRows[1].net.text_))
 check(strip(G.UI.boardRows[1].name.text_):find("host"), "the host is marked")
+fitsIn(BiSGambaFrame, "the table with the leaderboard open")
 -- the effects
 local function seatOf(name) for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == name then return s_ end end end
 check(seatOf("Kumlust").aura.shown, "biggest winner gets the gold aura")
@@ -1139,6 +1261,7 @@ check(seatOf("Kumlust").crown.shown and not seatOf("Dps2").crown.shown, "the hos
 -- both panels open at once: the board sits under the debts
 G.UI:ToggleDebts()
 check(G.UI.debtPanel.shown and G.UI.boardPanel.shown, "debts and board both open")
+fitsIn(BiSGambaFrame, "the table with debts and leaderboard open")
 G.UI:ToggleDebts()
 -- a played round writes the record
 SlashCmdList.BISGAMBA("go")
@@ -1443,6 +1566,7 @@ local opt = G.UI.opt
 check(opt ~= nil and opt:IsShown(), "options window opens")
 check(opt.points and #opt.points > 0, "and it is anchored on screen, not left off-screen")
 check(opt:GetWidth() == OPT.W, "it stays narrow: " .. tostring(opt:GetWidth()))
+fitsIn(opt, "the options window")
 check(opt:GetHeight() == OPT.HEADER + #opt.rows * OPT.ROW + OPT.PAD, "height is header + rows + pad: " .. tostring(opt:GetHeight()))
 local function rowFor(label) for _, r in ipairs(opt.rows) do if r.opt and r.opt.label == label then return r end end end
 local function fireC(ctl) ctl.scripts.OnClick(ctl) end
@@ -1727,12 +1851,60 @@ end
 ---------------------------------------------------------------- the table starts small and grows
 SlashCmdList.BISGAMBA("reset"); G.UI:Show(); G.UI:Layout()
 local emptyH = G.UI.frame.h
+G.UI:Refresh(); fitsIn(BiSGambaFrame, "the table, empty")
 SlashCmdList.BISGAMBA("start 100")
 fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); fire("CHAT_MSG_RAID", "1", "Dps1")
 G.UI:Layout()
 check(G.UI.frame.h > emptyH, "the table grows as people join (empty " .. tostring(emptyH) .. " -> seated " .. tostring(G.UI.frame.h) .. ")")
 SlashCmdList.BISGAMBA("reset"); G.UI:Layout()
 check(math.abs(G.UI.frame.h - emptyH) < 1, "and shrinks back to the short empty strip when it clears")
+
+---------------------------------------------------------------- the longest real names, the biggest gold
+-- (6 Oct 2026) The fit check with the worst real case in every window: Forever names carry a
+-- surname ("Name Surname", 12 + 1 + 12 at most), a big table rolls /10000, and a long tab runs to
+-- six figures. A full row of seats puts the outer seats on the window's edges.
+do
+  SlashCmdList.BISGAMBA("reset"); BiSGambaDB.rounds = {}; BiSGambaDB.debts = {}
+  local longs = { "Kumsecration Dawnbreaker", "Bellatrixxa Moonwhisper", "Grimtoothax Ironmantle",
+    "Thunderhoof Stormcaller", "Whisperwind Ashenvale", "Morganthiel Duskwalker", "Shadowmoonx Blackwater",
+    "Elunarielle Silverleaf", "Brightblade Kingsbridge", "Gallowsgate Thornfield", "Hollowpeakx Greymantle",
+    "Starfallenx Nightsong", "Wolfsbanexx Hearthglen", "Ravenholdtx Lordaeron" }
+  SlashCmdList.BISGAMBA("start 10000"); G.UI:Show()
+  for _, n in ipairs(longs) do fire("CHAT_MSG_RAID", "1", n .. "-Dreamscythe") end
+  check(#G.Game.order == 15, "fifteen at the table, two rows: " .. #G.Game.order)
+  G.UI:Refresh(); fitsIn(BiSGambaFrame, "long names, joining")
+  SlashCmdList.BISGAMBA("go"); G.UI:Refresh()
+  fitsIn(BiSGambaFrame, "long names, nobody has rolled")
+  fire("CHAT_MSG_SYSTEM", "Kumlust rolls 5000 (1-10000)")
+  for i, n in ipairs(longs) do fire("CHAT_MSG_SYSTEM", ("%s rolls %d (1-10000)"):format(n, i == 1 and 9999 or i == 2 and 2 or 100 + i)) end
+  runTimers()
+  check(G.Game.state == "DONE" and G.Game.result.winner == longs[1] and G.Game.result.loser == longs[2],
+    "the long names win and lose: " .. tostring(G.Game.result and G.Game.result.winner))
+  G.UI:Refresh(); fitsIn(BiSGambaFrame, "long names, settled /10000")
+  -- a six-figure tab, both ways, with both panels open
+  G.Ledger.Add("Kumlust", longs[3], 123456)
+  G.Ledger.Add(longs[4], "Kumlust", 98765)
+  G.Ledger.Add(longs[5], longs[6], 123456)
+  BiSGambaDB.base = { [longs[1]] = { net = 123456, wins = 99, losses = 88, games = 187, best = 0, worst = 0 },
+    [longs[2]] = { net = -123456, wins = 88, losses = 99, games = 187, best = 0, worst = 0 } }
+  G.Rebuild()
+  G.UI:ToggleDebts(); G.UI:ToggleBoard(); G.UI:Refresh()
+  fitsIn(BiSGambaFrame, "long names, six-figure debts and board open")
+  G.UI:ToggleDebts(); G.UI:ToggleBoard()
+  -- the table cleared, the tab left: the narrowest window with the widest pay button
+  SlashCmdList.BISGAMBA("reset"); G.UI:Refresh()
+  fitsIn(BiSGambaFrame, "empty table, I owe six figures")
+  -- the trade, with the partner I owe the most
+  openTrade(longs[3])
+  fire("TRADE_SHOW"); runTimers(); G.UI:Refresh()
+  check(G.Trade.panel and G.Trade.panel.shown, "the panel is up for the long name")
+  fitsIn(BiSGambaTradePanel, "the trade panel, long name, six figures")
+  fitsIn(BiSGambaFrame, "the table while that trade is open")
+  TradeFrame.shown = false; fire("TRADE_CLOSED"); G.Trade.pending = nil; runTimers()
+  BiSGambaDB.debts, BiSGambaDB.base, BiSGambaDB.rounds = {}, {}, {}
+  G.Rebuild()
+  SlashCmdList.BISGAMBA("reset")
+end
 
 ---------------------------------------------------------------- win/lose streaks from the ledger
 SlashCmdList.BISGAMBA("reset")
