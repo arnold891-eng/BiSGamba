@@ -1,5 +1,11 @@
 # BiS Gamba - Changelog
 
+## Unreleased
+
+- **Seat labels fit their seat.** A seat is 46 px: long names ("Kumsecrat.") and "owes 160g"
+  ran past it. Names are cut at 7 letters, the money under a seat reads -160g / +160g (98.7k
+  from five figures), and who owes whom is in the seat's tooltip.
+
 ## 1.3.5
 
 - **No more errors from chat the game hides.** On WoW Forever the game can hide what is said in
@@ -9,9 +15,6 @@
 - **The table is told.** If that happens during a round, Gamba says once that rolls typed right
   now cannot be counted, so everyone knows to roll again once it lets up.
 - **`/gamba hidden`** shows how often the game hid chat this session.
-- **Seat labels fit their seat.** A seat is 46 px: long names ("Kumsecrat.") and "owes 160g"
-  ran past it. Names are cut at 7 letters, the money under a seat reads -160g / +160g (98.7k
-  from five figures), and who owes whom is in the seat's tooltip.
 
 ## 1.3.4
 
