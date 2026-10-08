@@ -3892,6 +3892,10 @@ G.hidden = {}
 local toldHidden = false
 
 ev:SetScript("OnEvent", function(_, event, a1, a2, ...)
+  -- ANOTHER ADDON'S MESSAGE IS DROPPED ON ONE QUESTION (7 Oct 2026, the cost pass). Every addon in
+  -- a raid talks on CHAT_MSG_ADDON - hundreds of lines a second - and each one cost three secret
+  -- checks before anything asked whose it was. The prefix is asked first, secret-guarded.
+  if event == "CHAT_MSG_ADDON" and (Hidden(a1) or a1 ~= PREFIX) then return end
   if Hidden(a1) or Hidden(a2) or Hidden((select(2, ...))) then
     G.hidden[event] = (G.hidden[event] or 0) + 1
     if not toldHidden and Game.Active() and (event == "CHAT_MSG_SYSTEM" or CHAT[event]) then

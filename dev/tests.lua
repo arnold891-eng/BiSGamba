@@ -1677,7 +1677,7 @@ SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- the shared BiS channel (LibBiSComm)
 local lib = _G.LibBiSComm
-check(lib ~= nil and lib.MINOR == 8, "LibBiSComm is embedded, minor 8: " .. tostring(lib and lib.MINOR))
+check(lib ~= nil and lib.MINOR == 9, "LibBiSComm is embedded, minor 9: " .. tostring(lib and lib.MINOR))
 check(BiSTheme.OPTIONS_MINOR == 2, "options kit minor 2 (Escape closes): " .. tostring(BiSTheme.OPTIONS_MINOR))
 -- the loader IS the TOC now (above); this assert stays as the plain-English fence
 do local toc = assert(io.open("BiSGamba.toc", "r")):read("*a")
@@ -2029,6 +2029,24 @@ fire("GROUP_ROSTER_UPDATE")
 fire("CHAT_MSG_SYSTEM", "Nobody rolls 5 (1-310)")     -- stranger, not in group, after DONE
 SlashCmdList.BISGAMBA("reset")
 check(G.Game.state == "IDLE", "reset")
+
+-- WHAT A RAID'S CHATTER COSTS, IN CLIENT CALLS (7 Oct 2026). BiSHealing asked the client ~630,000
+-- things a second and every suite was green; Arn: "make sure stuff like this does not happen".
+-- Every addon in a raid talks on CHAT_MSG_ADDON; none of it but ours is our business, and each
+-- line used to cost three secret checks before anything asked whose it was.
+do
+  local Cost = dofile("../_bisdev/dev/cost.lua")
+  local realIs = _G.issecretvalue
+  _G.issecretvalue = _G.issecretvalue or function() return false end
+  local n, by = Cost.Count(function()
+    for i = 1, 500 do
+      fire("CHAT_MSG_ADDON", (i % 2 == 0) and "DBM-Core" or "BigWigs", "some\tpayload", "RAID", "Dps2-Dreamscythe")
+    end
+  end)
+  _G.issecretvalue = realIs
+  check(n <= 500, "500 other addons' messages cost at most one client question each: " .. n
+    .. " (" .. Cost.Top(by, 3) .. ")")
+end
 
 print(("%d checks, %d failed"):format(pass + fail, fail))
 os.exit(fail == 0 and 0 or 1)
