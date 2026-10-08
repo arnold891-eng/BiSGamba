@@ -1,5 +1,15 @@
 # BiS Gamba - Changelog
 
+## Unreleased
+
+- **Lighter in a raid.** Other addons' messages (DBM, BigWigs, ...) are dropped on one question
+  instead of three. Shared libs: LibBiSComm minor 9 (one roster walk per roster change), BiS>
+  prompt minor 5 (the window header no longer re-measures its text every frame).
+
+- **Seat labels fit their seat.** A seat is 46 px: long names ("Kumsecrat.") and "owes 160g"
+  ran past it. Names are cut at 7 letters, the money under a seat reads -160g / +160g (98.7k
+  from five figures), and who owes whom is in the seat's tooltip.
+
 ## 1.3.5
 
 - **No more errors from chat the game hides.** On WoW Forever the game can hide what is said in

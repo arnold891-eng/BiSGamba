@@ -2281,6 +2281,13 @@ local function ShortName(name, n)
   return name
 end
 
+-- gold for a 46 px seat: 9,999g fits, 98,765g does not, so five figures and up read 98.7k
+-- (rounded down; the tooltip has the exact sum)
+local function CellGold(n)
+  if n < 10000 then return Gold(n) end
+  return ("%.1fk"):format(math.floor(n / 100) / 10)
+end
+
 local function SeatTooltip(seat)
   local p = seat.person
   if not p then return end
@@ -2512,7 +2519,8 @@ local function FillSeat(seat, p)
   seat.crown:SetShown(p.name == Game.host)
   for _, t in ipairs(seat.flames) do t:SetShown(losing) end
   local r, g, b = T.classRGB(p.class or "")
-  seat.name:SetText(ShortName(p.name, 9))
+  -- 7 + "." is what a 46 px seat holds at 10 pt (the suite's fit check measures it)
+  seat.name:SetText(ShortName(p.name, 7))
   seat.name:SetTextColor(r, g, b)
   if p.name == MyName() then seat.name:SetTextColor(T.rgb("gold")) end
   -- the 2D tile's rim carries the same news as the aura and the fire
@@ -2555,15 +2563,13 @@ local function FillSeat(seat, p)
   elseif inTie then seat.ring:SetVertexColor(T.rgba("accent", 1))
   else seat.ring:SetVertexColor(T.rgba("line2", 1)) end
 
+  -- A seat is 46 px: "owes 160g" did not fit, "to Kumsecra." neither. The cell says the sum
+  -- as the board does (-160g red, +160g green); who owes whom is in the seat's tooltip.
   local owes, owed = Ledger.Net(p.name)
   local line1, line2 = "", ""
-  if owes > 0 then
-    local list = Ledger.Owes(p.name)
-    line1 = T.text("warn", "owes " .. Gold(owes))
-    if #list == 1 then line2 = T.text("muted", "to " .. ShortName(list[1].to, 8)) elseif #list > 1 then line2 = T.text("muted", #list .. " people") end
-  end
+  if owes > 0 then line1 = T.text("warn", "-" .. CellGold(owes)) end
   if owed > 0 then
-    local txt = T.text("good", "gets " .. Gold(owed))
+    local txt = T.text("good", "+" .. CellGold(owed))
     if line1 == "" then line1 = txt else line2 = txt end
   end
   seat.owe:SetText(line1)
@@ -3886,6 +3892,10 @@ G.hidden = {}
 local toldHidden = false
 
 ev:SetScript("OnEvent", function(_, event, a1, a2, ...)
+  -- ANOTHER ADDON'S MESSAGE IS DROPPED ON ONE QUESTION (7 Oct 2026, the cost pass). Every addon in
+  -- a raid talks on CHAT_MSG_ADDON - hundreds of lines a second - and each one cost three secret
+  -- checks before anything asked whose it was. The prefix is asked first, secret-guarded.
+  if event == "CHAT_MSG_ADDON" and (Hidden(a1) or a1 ~= PREFIX) then return end
   if Hidden(a1) or Hidden(a2) or Hidden((select(2, ...))) then
     G.hidden[event] = (G.hidden[event] or 0) + 1
     if not toldHidden and Game.Active() and (event == "CHAT_MSG_SYSTEM" or CHAT[event]) then
