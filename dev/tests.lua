@@ -1677,7 +1677,7 @@ SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- the shared BiS channel (LibBiSComm)
 local lib = _G.LibBiSComm
-check(lib ~= nil and lib.MINOR == 9, "LibBiSComm is embedded, minor 9: " .. tostring(lib and lib.MINOR))
+check(lib ~= nil and lib.MINOR == 10, "LibBiSComm is embedded, minor 10: " .. tostring(lib and lib.MINOR))
 check(BiSTheme.OPTIONS_MINOR == 2, "options kit minor 2 (Escape closes): " .. tostring(BiSTheme.OPTIONS_MINOR))
 -- the loader IS the TOC now (above); this assert stays as the plain-English fence
 do local toc = assert(io.open("BiSGamba.toc", "r")):read("*a")
@@ -1728,7 +1728,7 @@ end
 
 ---------------------------------------------------------------- the rez emitter (RezComm, on the BiSInn pipe)
 local rez = _G.BiSRezComm
-check(rez ~= nil and rez.MINOR == 3, "RezComm is embedded, minor 3")
+check(rez ~= nil and rez.MINOR == 4, "RezComm is embedded, minor 4")
 local function ev(...) rez._frame.scripts.OnEvent(rez._frame, ...) end
 local RID = 2006                                  -- Resurrection rank 1
 rez._booted = false; rez.standDown = nil; rez.pending = nil; rez.sent = {}
