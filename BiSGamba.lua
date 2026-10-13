@@ -90,7 +90,7 @@ local MAX_ROLL = 1000000
 
 -- Textured stand-ins per race and sex for people out of range: city guards and
 -- innkeepers render with baked skin where the base player bodies come out white.
--- Same table BiS Campfire uses; /gamba npc <Race> <2|3> <id> to override.
+-- Same table BiS Campfire uses; /bisgamba npc <Race> <2|3> <id> to override.
 local NPC = {
   Human    = { [2] = 68,    [3] = 6740  },
   Orc      = { [2] = 3296,  [3] = 6929  },
@@ -137,7 +137,7 @@ local db                            -- the saved variables, set up just below
 -- rather than .wav and an addon cannot ask which, so every path is tried both
 -- ways. Sound kit numbers come last and are the safety net: they are resolved by
 -- the client rather than by path, which is why WeakAuras offers "sound by kit
--- ID" - those always work. /gamba sound probe shows what each note settled on.
+-- ID" - those always work. /bisgamba sound probe shows what each note settled on.
 local SIMON = "Sound\\Spells\\SimonGame_"
 local NOTE = {
   -- the four tones, low to high
@@ -348,7 +348,7 @@ function Sound.Play(name, n)
     if when <= 0 then
       if PlayNote(which) == false and not Sound.warned then
         Sound.warned = true
-        Print("no sound came out - try " .. T.text("ink", "/gamba sound probe") .. " to see what this client has")
+        Print("no sound came out - try " .. T.text("ink", "/bisgamba sound probe") .. " to see what this client has")
       end
     else
       After(when, function() PlayNote(which) end)
@@ -1290,7 +1290,7 @@ end
 local function AskToWipe(who)
   local mine = who == nil
   if not mine and db.neverOpen then
-    Print((who or "somebody") .. " is resetting the leaderboard - " .. T.text("ink", "/gamba wipestats yes") .. " to follow suit")
+    Print((who or "somebody") .. " is resetting the leaderboard - " .. T.text("ink", "/bisgamba wipestats yes") .. " to follow suit")
     return
   end
   local text = mine and "Wipe the BiS Gamba leaderboard for everyone? Debts are kept."
@@ -1298,7 +1298,7 @@ local function AskToWipe(who)
   if not StaticPopupDialogs or not StaticPopup_Show then
     -- no popup on this client: say what to type instead
     Warn(text)
-    Print("type " .. T.text("ink", "/gamba wipestats yes") .. " to wipe yours")
+    Print("type " .. T.text("ink", "/bisgamba wipestats yes") .. " to wipe yours")
     return
   end
   StaticPopupDialogs["BISGAMBA_WIPE"] = {
@@ -1642,7 +1642,7 @@ function Game.OnComm(msg, sender)
     Game.host = sender
     Game.state = "JOIN"
     Fresh(max)
-    local hint = (db.neverOpen or db.autoOpen == false) and "  (/gamba to open the table)" or ""
+    local hint = (db.neverOpen or db.autoOpen == false) and "  (/bisgamba to open the table)" or ""
     Print(sender .. " opened a table: /roll " .. max .. hint)
     UI:Event(Bare(sender) .. " deals - /roll " .. max, "gold")
     Sound.Play("open")
@@ -2101,7 +2101,7 @@ function Trade.OnEvent(event, a1, a2)
     local msg = type(a2) == "string" and a2 or a1
     if type(msg) == "string" and msg:lower():find("already trading") then
       Trade.pending = nil
-      Warn("the client thinks a trade is still open - /gamba fixtrade")
+      Warn("the client thinks a trade is still open - /bisgamba fixtrade")
     end
   end
 end
@@ -2746,7 +2746,7 @@ function UI:Build()
     "Open this window by itself when somebody starts a game.",
     function(on)
       db.autoOpen = on
-      Print(on and "the table will pop up when a host starts a game" or "the table stays closed until you /gamba")
+      Print(on and "the table will pop up when a host starts a game" or "the table stays closed until you /bisgamba")
     end)
   auto:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -7, 4)
   self.autoOpen = auto
@@ -3333,7 +3333,7 @@ end
 --
 -- One narrow flat window, four control kinds, no tabs. Each row's `set` calls a
 -- shared owner in `Own` that does the work and its live side effect; the same
--- owner is what the /gamba slash handlers call, so the window and chat never
+-- owner is what the /bisgamba slash handlers call, so the window and chat never
 -- drift. The window says every change in its BiS> prompt; the slash adds the
 -- chat line. See claude/bis-options.md for the law.
 ----------------------------------------------------------------------------
@@ -3608,43 +3608,43 @@ local function Help()
   Print(T.text("accent", "BiS Gamba") .. " " .. T.text("muted", ((C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata("BiSGamba", "Version"))
     or (GetAddOnMetadata and GetAddOnMetadata("BiSGamba", "Version")) or "")) .. " - commands:")
   local lines = {
-    "/gamba              toggle the table",
-    "/gamba start [N]    open a table, /roll N (default " .. tostring(db.wager) .. ")",
-    "/gamba call [secs]  last call: a countdown, then the rolls start themselves",
-    "/gamba go           stop taking joins, start rolling now",
-    "/gamba join         join / leave somebody else's table (types 1 / -1)",
-    "/gamba roll         roll the right range",
-    "/gamba view [2d|3d]  switch between 2D and 3D portraits",
-    "/gamba end          settle with the rolls in / close the table",
-    "/gamba nudge        name the people still to roll, in chat",
-    "/gamba remind N     seconds before the straggler reminder (0 = off)",
-    "/gamba pay [name]   trade the gold to the next person you owe",
-    "/gamba config       the settings window (options | settings)",
-    "/gamba debts        print who owes who",
-    "/gamba board        the leaderboard, biggest winners first",
-    "/gamba sync         swap missing rounds with the group so the board agrees",
-    "/gamba adopt [who]  throw your ledger away and take theirs whole",
-    "/gamba rounds       the round ledger the leaderboard is built from",
-    "/gamba rebuild      recompute the leaderboard from the ledger",
-    "/gamba history      the last ten rounds",
-    "/gamba hidden       how often the game hid chat from the addon this session",
-    "/gamba scope [guild|all]   whether pug rounds count on the board",
-    "/gamba wipestats yes       throw away your ledger",
-    "/gamba wipestats all       ask everyone with the addon to wipe theirs too",
-    "/gamba paid A B     mark A's debt to B paid",
-    "/gamba clear        wipe every debt",
-    "/gamba flat         toggle: loser pays the difference (default) or the full wager",
-    "/gamba autojoin     toggle: seat anyone in the group who /rolls the range (default off: only 1 / join counts)",
-    "/gamba quiet        toggle chat announcements",
-    "/gamba popup        toggle: open the window when a host starts a game",
-    "/gamba combat       toggle hiding the window while you're in combat",
-    "/gamba neveropen    toggle: nothing ever appears on its own",
-    "/gamba sound        toggle the cues (sound test | probe | kit <id> | sfx|master)",
-    "/gamba voice        speak the cues with a FojjiCore voice pack (voice list | <name> | off | auto)",
-    "/gamba whisper      toggle whispering the balance to people without the addon",
-    "/gamba users        who else you have seen running BiS Gamba",
-    "/gamba autocopy     toggle selecting the amount for you when a trade opens",
-    "/gamba scale X | zoom X | npc Race 2|3 id | minimap | fixtrade | tradedebug | reset",
+    "/bisgamba              toggle the table",
+    "/bisgamba start [N]    open a table, /roll N (default " .. tostring(db.wager) .. ")",
+    "/bisgamba call [secs]  last call: a countdown, then the rolls start themselves",
+    "/bisgamba go           stop taking joins, start rolling now",
+    "/bisgamba join         join / leave somebody else's table (types 1 / -1)",
+    "/bisgamba roll         roll the right range",
+    "/bisgamba view [2d|3d]  switch between 2D and 3D portraits",
+    "/bisgamba end          settle with the rolls in / close the table",
+    "/bisgamba nudge        name the people still to roll, in chat",
+    "/bisgamba remind N     seconds before the straggler reminder (0 = off)",
+    "/bisgamba pay [name]   trade the gold to the next person you owe",
+    "/bisgamba config       the settings window (options | settings)",
+    "/bisgamba debts        print who owes who",
+    "/bisgamba board        the leaderboard, biggest winners first",
+    "/bisgamba sync         swap missing rounds with the group so the board agrees",
+    "/bisgamba adopt [who]  throw your ledger away and take theirs whole",
+    "/bisgamba rounds       the round ledger the leaderboard is built from",
+    "/bisgamba rebuild      recompute the leaderboard from the ledger",
+    "/bisgamba history      the last ten rounds",
+    "/bisgamba hidden       how often the game hid chat from the addon this session",
+    "/bisgamba scope [guild|all]   whether pug rounds count on the board",
+    "/bisgamba wipestats yes       throw away your ledger",
+    "/bisgamba wipestats all       ask everyone with the addon to wipe theirs too",
+    "/bisgamba paid A B     mark A's debt to B paid",
+    "/bisgamba clear        wipe every debt",
+    "/bisgamba flat         toggle: loser pays the difference (default) or the full wager",
+    "/bisgamba autojoin     toggle: seat anyone in the group who /rolls the range (default off: only 1 / join counts)",
+    "/bisgamba quiet        toggle chat announcements",
+    "/bisgamba popup        toggle: open the window when a host starts a game",
+    "/bisgamba combat       toggle hiding the window while you're in combat",
+    "/bisgamba neveropen    toggle: nothing ever appears on its own",
+    "/bisgamba sound        toggle the cues (sound test | probe | kit <id> | sfx|master)",
+    "/bisgamba voice        speak the cues with a FojjiCore voice pack (voice list | <name> | off | auto)",
+    "/bisgamba whisper      toggle whispering the balance to people without the addon",
+    "/bisgamba users        who else you have seen running BiS Gamba",
+    "/bisgamba autocopy     toggle selecting the amount for you when a trade opens",
+    "/bisgamba scale X | zoom X | npc Race 2|3 id | minimap | fixtrade | tradedebug | reset",
   }
   for _, l in ipairs(lines) do DEFAULT_CHAT_FRAME:AddMessage("  " .. T.text("ink2", l)) end
 end
@@ -3680,7 +3680,7 @@ local function Slash(msg)
     local d = a and FindDebt(Bare(a), Bare(b))
     if d then Ledger.Announce(d.from, d.to, d.amount) end
     if a and Ledger.Clear(Bare(a), Bare(b)) then Print(a .. " -> " .. b .. " marked paid"); UI:Refresh()
-    else Warn("usage: /gamba paid <who owes> <who is owed>") end
+    else Warn("usage: /bisgamba paid <who owes> <who is owed>") end
   elseif cmd == "clear" then Ledger.ClearAll(); Print("ledger wiped"); UI:Refresh()
   elseif cmd == "flat" then db.payDiff = not db.payDiff; Print(db.payDiff and "loser pays the difference" or "loser pays the full wager")
   elseif cmd == "nudge" then Game.Remind(true)
@@ -3698,9 +3698,9 @@ local function Slash(msg)
   elseif cmd == "npc" then
     local race, sex, id = rest:match("^(%a+)%s+(%d)%s+(%d+)$")
     if race and NPC[race] then db.npc[race] = db.npc[race] or {}; db.npc[race][tonumber(sex)] = tonumber(id); Print(race .. " " .. sex .. " -> npc " .. id); UI:Refresh()
-    else Warn("usage: /gamba npc <Race> <2|3> <npcID>   races: " .. (function() local t = {} for r in pairs(NPC) do t[#t + 1] = r end table.sort(t) return table.concat(t, " ") end)()) end
+    else Warn("usage: /bisgamba npc <Race> <2|3> <npcID>   races: " .. (function() local t = {} for r in pairs(NPC) do t[#t + 1] = r end table.sort(t) return table.concat(t, " ") end)()) end
   elseif cmd == "autoopen" or cmd == "popup" then
-    db.autoOpen = db.autoOpen == false; Print(db.autoOpen and "the table will pop up when a host starts a game" or "the table stays closed until you /gamba"); UI:Refresh()
+    db.autoOpen = db.autoOpen == false; Print(db.autoOpen and "the table will pop up when a host starts a game" or "the table stays closed until you /bisgamba"); UI:Refresh()
   elseif cmd == "sound" then
     local v = rest:lower()
     local kit = v:match("^kit%s+(%d+)$")
@@ -3797,8 +3797,8 @@ local function Slash(msg)
       local n = 0
       for _ in pairs(db.rounds) do n = n + 1 end
       Warn(("this throws away the round ledger (%d rounds) and everyone's record"):format(n))
-      Print("  " .. T.text("ink", "/gamba wipestats yes") .. " wipes yours")
-      Print("  " .. T.text("ink", "/gamba wipestats all") .. " asks everyone with the addon to wipe theirs too")
+      Print("  " .. T.text("ink", "/bisgamba wipestats yes") .. " wipes yours")
+      Print("  " .. T.text("ink", "/bisgamba wipestats all") .. " asks everyone with the addon to wipe theirs too")
     end
   elseif cmd == "rounds" then
     local list = {}
@@ -3825,8 +3825,11 @@ local function Slash(msg)
   else Help() end
 end
 
-SLASH_BISGAMBA1 = "/gamba"
-SLASH_BISGAMBA2 = "/bisgamba"
+-- /bisgamba is the main command (Arn, 12 Oct 2026): the family's commands are
+-- all /bis* (/bish, /bist, /bisg). The old /gamba and /gamble stay as aliases
+-- so nobody's macros or habits break.
+SLASH_BISGAMBA1 = "/bisgamba"
+SLASH_BISGAMBA2 = "/gamba"
 SLASH_BISGAMBA3 = "/gamble"
 SlashCmdList.BISGAMBA = Slash
 

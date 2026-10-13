@@ -454,7 +454,7 @@ do
     "nothing about the round changed")
   SlashCmdList.BISGAMBA("hidden")
   check(lastChat():find("hidden chat this session") and lastChat():find("CHAT_MSG_RAID 2"),
-    "/gamba hidden reports the count: " .. lastChat())
+    "/bisgamba hidden reports the count: " .. lastChat())
   _G.issecretvalue = realIs
 end
 -- somebody who never joined cannot buy in once the rolls are out, by any route
@@ -1295,7 +1295,7 @@ G.UI.frame:Hide()
 from("Dps2", "OPEN", "90")
 check(not G.UI.frame.shown, "a new table does not open the window")
 check(G.Game.host == "Dps2", "but we still know about it")
-check(chat[#chat]:find("/gamba to open the table"), "and are told how to look: " .. lastChat())
+check(chat[#chat]:find("/bisgamba to open the table"), "and are told how to look: " .. lastChat())
 -- nor does combat ending
 G.UI:Show()
 inCombat = true; fire("PLAYER_REGEN_DISABLED")
@@ -2046,6 +2046,56 @@ do
   _G.issecretvalue = realIs
   check(n <= 500, "500 other addons' messages cost at most one client question each: " .. n
     .. " (" .. Cost.Top(by, 3) .. ")")
+end
+
+-- THE COMMAND IS /bisgamba (Arn, 12 Oct 2026): the family's commands are all /bis*. The client
+-- shows SLASH_X1 as the command's name; /gamba and /gamble stay as aliases so old macros work.
+do
+  check(SLASH_BISGAMBA1 == "/bisgamba", "the main command is /bisgamba: " .. tostring(SLASH_BISGAMBA1))
+  -- route a typed line the way the client does: every SLASH_<KEY><n> global names a command,
+  -- SlashCmdList[KEY] is what it runs
+  local function route(line)
+    local word, rest = line:match("^(%S+)%s*(.*)$")
+    word = word:lower()
+    for k, v in pairs(_G) do
+      local key = type(k) == "string" and k:match("^SLASH_(.-)%d+$")
+      if key and type(v) == "string" and v:lower() == word then return SlashCmdList[key], rest end
+    end
+  end
+  for _, word in ipairs({ "/bisgamba", "/gamba", "/gamble" }) do
+    local fn = route(word .. " help")
+    check(fn ~= nil and fn == SlashCmdList.BISGAMBA, word .. " reaches the BiSGamba handler")
+  end
+  -- the help the player reads names /bisgamba, never the old /gamba
+  local before = #chat
+  local fn, rest = route("/gamba help")
+  if fn then fn(rest) end
+  local helpLines, saysNew, saysOld = 0, 0, 0
+  for i = before + 1, #chat do
+    helpLines = helpLines + 1
+    if chat[i]:find("/bisgamba", 1, true) then saysNew = saysNew + 1 end
+    if chat[i]:find("/gamba", 1, true) then saysOld = saysOld + 1 end
+  end
+  check(helpLines > 10 and saysNew > 10, "the help lists the commands as /bisgamba: " .. saysNew .. " of " .. helpLines)
+  check(saysOld == 0, "and no help line still says /gamba: " .. saysOld)
+  -- and nothing the player reads still tells them to type /gamba: every line of the addon and
+  -- the README, except comments and the alias registration itself
+  local function stale(path, isLua)
+    local fh = assert(io.open(path, "r")) local found = {}
+    local n = 0
+    for line in fh:lines() do
+      n = n + 1
+      local code = isLua and line:gsub("%-%-.*$", "") or line
+      if not (isLua and code:match("^%s*SLASH_BISGAMBA%d+%s*=")) and code:find("/gamba", 1, true) then
+        found[#found + 1] = path .. ":" .. n
+      end
+    end
+    fh:close()
+    return found
+  end
+  local bad = stale("BiSGamba.lua", true)
+  for _, f in ipairs(stale("README.md", false)) do bad[#bad + 1] = f end
+  check(#bad == 0, "no user-facing text says /gamba as the command to type: " .. table.concat(bad, ", "))
 end
 
 print(("%d checks, %d failed"):format(pass + fail, fail))
