@@ -13,7 +13,7 @@ Read ../_bisdev/CLAUDE.md first.
   - round-ledger adoption and `Trade`
   - `UI` (2d/3d seat grid)
   - Options (the `Own` owners)
-  - slash commands (`/gamba`, `/bisgamba`, `/gamble`)
+  - slash commands (`/bisgamba` main; `/gamba`, `/gamble` kept as aliases)
 - `Libs/`: embedded copies of LibBiSComm-1.0, RezComm-1.0 and BiSTheme Console/Options. See the libs rules in `../_bisdev/CLAUDE.md`.
 - `dev/tests.lua`: the headless harness. It loads every Lua file the TOC lists, in order, and needs the addon to expose `BiSGamba` (as `G`) and its event frame as `G._ev`. It fails if an internal leaks into `_G` or if the `dbver` migrations break. Use `runTimers(maxDelay)` for countdowns. `dev/harness.lua` is only a shim that `dofile`s it.
 - `dev/release.ps1`: builds the zip (without `dev/` or the dotfiles) and uploads it to CurseForge project 1682133. It sends the top entry of `CHANGELOG.md` as the changelog.
