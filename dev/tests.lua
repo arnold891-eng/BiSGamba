@@ -1565,9 +1565,9 @@ SlashCmdList.BISGAMBA("config")
 local opt = G.UI.opt
 check(opt ~= nil and opt:IsShown(), "options window opens")
 check(opt.points and #opt.points > 0, "and it is anchored on screen, not left off-screen")
-check(opt:GetWidth() == OPT.W, "it stays narrow: " .. tostring(opt:GetWidth()))
+check(math.abs(opt:GetWidth() / opt:GetHeight() - OPT.RATIO) < 0.01, "the BiSTheme standard, 1.43:1: " .. tostring(opt:GetWidth()) .. "x" .. tostring(opt:GetHeight()))
 fitsIn(opt, "the options window")
-check(opt:GetHeight() == OPT.HEADER + #opt.rows * OPT.ROW + OPT.PAD, "height is header + rows + pad: " .. tostring(opt:GetHeight()))
+check(opt:GetHeight() >= OPT.HEADER + math.ceil(#opt.rows / (opt.columns or 1)) * OPT.ROW, "tall enough for every row: " .. tostring(opt:GetHeight()))
 local function rowFor(label) for _, r in ipairs(opt.rows) do if r.opt and r.opt.label == label then return r end end end
 local function fireC(ctl) ctl.scripts.OnClick(ctl) end
 -- every label fits its budget, and a short one was not trimmed
@@ -1678,7 +1678,7 @@ SlashCmdList.BISGAMBA("reset")
 ---------------------------------------------------------------- the shared BiS channel (LibBiSComm)
 local lib = _G.LibBiSComm
 check(lib ~= nil and lib.MINOR == 10, "LibBiSComm is embedded, minor 10: " .. tostring(lib and lib.MINOR))
-check(BiSTheme.OPTIONS_MINOR == 2, "options kit minor 2 (Escape closes): " .. tostring(BiSTheme.OPTIONS_MINOR))
+check(BiSTheme.OPTIONS_MINOR == 3, "options kit minor 3 (windows dodge each other): " .. tostring(BiSTheme.OPTIONS_MINOR))
 -- the loader IS the TOC now (above); this assert stays as the plain-English fence
 do local toc = assert(io.open("BiSGamba.toc", "r")):read("*a")
   check(toc:find("Libs\\BiSTheme\\Options.lua", 1, true) ~= nil, "the TOC lists Libs\\BiSTheme\\Options.lua (BiSTools 0.3.0 shipped without it)") end
