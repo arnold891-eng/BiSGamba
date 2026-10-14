@@ -1565,9 +1565,9 @@ SlashCmdList.BISGAMBA("config")
 local opt = G.UI.opt
 check(opt ~= nil and opt:IsShown(), "options window opens")
 check(opt.points and #opt.points > 0, "and it is anchored on screen, not left off-screen")
-check(opt:GetWidth() == OPT.W, "it stays narrow: " .. tostring(opt:GetWidth()))
+check(math.abs(opt:GetWidth() / opt:GetHeight() - OPT.RATIO) < 0.01, "the BiSTheme standard, 1.43:1: " .. tostring(opt:GetWidth()) .. "x" .. tostring(opt:GetHeight()))
 fitsIn(opt, "the options window")
-check(opt:GetHeight() == OPT.HEADER + #opt.rows * OPT.ROW + OPT.PAD, "height is header + rows + pad: " .. tostring(opt:GetHeight()))
+check(opt:GetHeight() >= OPT.HEADER + math.ceil(#opt.rows / (opt.columns or 1)) * OPT.ROW, "tall enough for every row: " .. tostring(opt:GetHeight()))
 local function rowFor(label) for _, r in ipairs(opt.rows) do if r.opt and r.opt.label == label then return r end end end
 local function fireC(ctl) ctl.scripts.OnClick(ctl) end
 -- every label fits its budget, and a short one was not trimmed
