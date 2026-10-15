@@ -3854,12 +3854,14 @@ function SharedComm.Boot()
   lib:RegisterAddon(ADDON, (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
     or (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "dev")
   if db and db.comm == false then lib:SetEnabled(false) end   -- restore the off switch
+  if db and db.commShare == false and lib.SetSharing then lib:SetSharing(false) end   -- /biscomm share off (minor 12)
   lib:Boot()
 end
 
 function SharedComm.Save()
   local lib = _G.LibBiSComm
   if lib and db then db.comm = lib:Enabled() and true or false end
+  if lib and db and lib.Sharing then db.commShare = lib:Sharing() end
 end
 
 local ev = CreateFrame("Frame")
