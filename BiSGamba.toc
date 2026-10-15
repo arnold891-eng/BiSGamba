@@ -3,7 +3,7 @@
 ## Category: |cffb980ffBiS>|rAddons
 ## Notes: Lightweight high/low gold gambling for raid nights - shared table, debt ledger, one-click payouts, leaderboard.
 ## Author: Kumlust
-## Version: 1.4.0
+## Version: 1.5.0
 ## SavedVariables: BiSGambaDB
 ## OptionalDeps: BiSTheme
 ## X-Curse-Project-ID: 1682133
