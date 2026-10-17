@@ -344,7 +344,8 @@ do
   fh:close()
 end
 assert(#TOC >= 2, "the TOC lists files")
-assert(TOC[#TOC] == "BiSGamba.lua", "the addon is the last TOC line")
+assert(TOC[#TOC - 1] == "BiSGamba.lua" and TOC[#TOC] == "API.lua",
+  "the addon is the last TOC line but one; API.lua (BiSGambaAPI) loads after everything it calls")
 for _, f in ipairs(TOC) do
   local fn = assert(loadfile(f), "TOC lists a file that does not exist: " .. f)
   fn("BiSGamba")
@@ -362,6 +363,23 @@ local function fire(event, ...) ev.scripts.OnEvent(ev, event, ...) end
 local function from(sender, ...) fire("CHAT_MSG_ADDON", "BiSGamba", table.concat({ ... }, "\t"), "RAID", sender .. "-Dreamscythe") end
 local function saidHas(pattern)
   for i = #said, 1, -1 do if said[i]:find(pattern) then return said[i] end end
+end
+
+-- BiSGambaAPI before the saved variables load: every call answers nil, "not ready", none errors
+do
+  local A = _G.BiSGambaAPI
+  check(type(A) == "table" and A.major == 1 and A.version >= 1, "BiSGambaAPI is there, major 1")
+  for _, fn in ipairs({ "Ready", "Scope", "Leaderboard", "AllDebts", "RecentRounds", "Playing", "Table", "Open" }) do
+    local okc, v, why = pcall(A[fn])
+    check(okc and v == nil and why == "not ready", "API." .. fn .. " before login: nil, not ready - " .. tostring(why))
+  end
+  for _, fn in ipairs({ "Standing", "Debts" }) do
+    local okc, v, why = pcall(A[fn], "Dps2")
+    check(okc and v == nil and why == "not ready", "API." .. fn .. " before login: nil, not ready - " .. tostring(why))
+  end
+  check(A.RegisterCallback("early", "BiSGamba_RoundEnded", function() end) == true,
+    "a callback can be registered before login")
+  check(A.UnregisterCallback("early", "BiSGamba_RoundEnded") == true, "and taken off again")
 end
 
 -- a save from before dbver existed at all: every migration still has to run
@@ -2029,6 +2047,178 @@ fire("GROUP_ROSTER_UPDATE")
 fire("CHAT_MSG_SYSTEM", "Nobody rolls 5 (1-310)")     -- stranger, not in group, after DONE
 SlashCmdList.BISGAMBA("reset")
 check(G.Game.state == "IDLE", "reset")
+
+---------------------------------------------------------------- BiSGambaAPI, for other addons
+-- (16 Oct 2026, playbook 5a "Every addon has an API"): every function, ready; answers are copies -
+-- edit one, ask again, nothing changed; nothing in it moves gold or edits the books.
+do
+  local A = _G.BiSGambaAPI
+  inRaid = true
+  local keepPay, keepScope = BiSGambaDB.payDiff, BiSGambaDB.boardScope
+  BiSGambaDB.payDiff, BiSGambaDB.boardScope = true, "all"
+  BiSGambaDB.base, BiSGambaDB.history = {}, {}
+  BiSGambaDB.rounds = {
+    ["Dps2:1"] = { at = 100, max = 100, winner = "Dps2", loser = "Dps1", amount = 40, host = "Dps2" },
+    ["Dps2:2"] = { at = 200, max = 100, winner = "Dps2", loser = "Kumlust", amount = 15, host = "Dps2" },
+  }
+  BiSGambaDB.debts = { { from = "Dps1", to = "Dps2", amount = 40, at = 100 },
+                       { from = "Kumlust", to = "Dps2", amount = 15, at = 200 } }
+  G.Rebuild()
+  local function snapshot() -- the books, by value, to prove nothing here touches them
+    local s = {}
+    for _, d in ipairs(BiSGambaDB.debts) do s[#s + 1] = d.from .. ">" .. d.to .. "=" .. d.amount end
+    for n, r in pairs(BiSGambaDB.stats) do s[#s + 1] = n .. ":" .. r.net .. "/" .. r.games end
+    table.sort(s)
+    return table.concat(s, ",") .. "#" .. #BiSGambaDB.history
+  end
+  local books = snapshot()
+
+  check(A.Ready() == true, "API.Ready once loaded")
+  check(A.Scope() == "all" and A.Scope() == G.Scope(), "API.Scope is the board's scope: " .. tostring(A.Scope()))
+
+  local board = A.Leaderboard()
+  check(type(board) == "table" and #board == 3 and board[1].name == "Dps2" and board[1].net == 55
+    and board[1].wins == 2 and board[3].name == "Dps1" and board[3].net == -40,
+    "API.Leaderboard: best net first, every player with games")
+  board[1].net = 999999; board[1].name = "Hacker"; table.remove(board, 2)
+  local again = A.Leaderboard()
+  check(#again == 3 and again[1].name == "Dps2" and again[1].net == 55 and BiSGambaDB.stats.Dps2.net == 55,
+    "a leaderboard answer is a copy: editing it changes nothing")
+
+  local st = A.Standing("Kumlust-Dreamscythe")
+  check(st and st.name == "Kumlust" and st.net == -15 and st.losses == 1 and st.owes == 15 and st.owed == 0
+    and st.streak == "lose" and st.streakLength == 1, "API.Standing: record, streak and debt totals (realm dropped)")
+  st.net = 1; st.owes = 0
+  check(A.Standing("Kumlust").net == -15 and A.Standing("Kumlust").owes == 15, "a standing is a copy")
+  local none, why = A.Standing("Nobody")
+  check(none == nil and why == "no such player", "a stranger: nil, no such player - " .. tostring(why))
+  check(BiSGambaDB.stats.Nobody == nil, "and asking about a stranger did not create a record for them")
+  local nn, whyn = A.Standing()
+  check(nn == nil and whyn == "no name", "no name: says so")
+
+  local dt = A.Debts("Dps2")
+  check(dt and #dt.owes == 0 and #dt.owed == 2 and dt.owed[1].from == "Dps1" and dt.owed[1].amount == 40
+    and dt.owed[2].from == "Kumlust", "API.Debts: who owes them, biggest first")
+  dt.owed[1].amount = 0; dt.owed[1].from = "x"; dt.owed[3] = { from = "Fake", to = "Dps2", amount = 1 }
+  local dt2 = A.Debts("Dps2")
+  check(#dt2.owed == 2 and dt2.owed[1].amount == 40 and BiSGambaDB.debts[1].amount == 40, "a debts answer is a copy")
+  local mine = A.Debts("Kumlust")
+  check(#mine.owes == 1 and mine.owes[1].to == "Dps2" and mine.owes[1].amount == 15 and #mine.owed == 0,
+    "and what they owe")
+  local dn, whyd = A.Debts(42)
+  check(dn == nil and whyd == "no name", "API.Debts with no name: says so")
+
+  local all = A.AllDebts()
+  check(#all == 2 and all[1].amount == 40 and all[2].amount == 15, "API.AllDebts, biggest first")
+  all[1].amount = 1; all[3] = {}
+  check(#A.AllDebts() == 2 and A.AllDebts()[1].amount == 40, "an all-debts answer is a copy")
+
+  check(A.Playing() == false, "API.Playing: no table")
+  local t0 = A.Table()
+  check(t0 and t0.state == "IDLE" and #t0.players == 0, "API.Table when idle")
+  check(snapshot() == books, "every question above, and every edit of its answers, left the books as they were")
+
+  -- a real round, start to settle, with a listener on it
+  local heardRound, heardTwice, heardTimes = nil, nil, 0
+  check(A.RegisterCallback("Tester", "BiSGamba_RoundEnded", function(e, p) heardTimes = heardTimes + 1; heardRound = p; p.amount = -1 end),
+    "API.RegisterCallback")
+  A.RegisterCallback("Second", "BiSGamba_RoundEnded", function(e, p) heardTwice = p end)
+  A.RegisterCallback("Breaks", "BiSGamba_RoundEnded", function() error("a listener that throws") end)
+  local bad1, w1 = A.RegisterCallback("Tester", "BiSGamba_NoSuch", function() end)
+  local bad2, w2 = A.RegisterCallback("Tester", "BiSGamba_RoundEnded", "not a function")
+  local bad3, w3 = A.RegisterCallback(nil, "BiSGamba_RoundEnded", function() end)
+  check(bad1 == nil and w1 == "bad event" and bad2 == nil and w2 == "no function" and bad3 == nil and w3 == "no owner",
+    "a bad registration says why")
+
+  SlashCmdList.BISGAMBA("start 100")
+  fire("CHAT_MSG_RAID", "1", "Dps2")
+  check(A.Playing() == true, "API.Playing while the table is open")
+  local t1 = A.Table()
+  check(t1.state == "JOIN" and t1.host == "Kumlust" and t1.hosting == true and t1.max == 100 and #t1.players == 2,
+    "API.Table while joining")
+  t1.players[1].name = "Edited"; t1.state = "IDLE"; t1.players[3] = { name = "Ghost" }
+  check(G.Game.state == "JOIN" and #G.Game.order == 2 and G.Game.order[1] ~= "Edited" and G.Game.players.Ghost == nil,
+    "a table answer is a copy: nobody seated, nothing moved")
+  SlashCmdList.BISGAMBA("go")
+  fire("CHAT_MSG_SYSTEM", "Kumlust rolls 90 (1-100)")
+  fire("CHAT_MSG_SYSTEM", "Dps2 rolls 30 (1-100)")
+  local t2 = A.Table()
+  local rolls = {}
+  for _, p in ipairs(t2.players) do rolls[p.name] = p.roll end
+  check(t2.state == "ROLL" and rolls.Kumlust == 90 and rolls.Dps2 == 30, "API.Table shows the rolls")
+  SlashCmdList.BISGAMBA("end")
+  check(G.Game.state == "DONE", "the round settled")
+  check(heardTimes == 1 and heardRound and heardRound.winner == "Kumlust" and heardRound.loser == "Dps2"
+    and heardRound.high == 90 and heardRound.low == 30 and heardRound.max == 100 and heardRound.host == "Kumlust"
+    and type(heardRound.id) == "string" and type(heardRound.at) == "number",
+    "BiSGamba_RoundEnded: who, rolls, host, id, when")
+  check(heardTwice and heardTwice.amount == 60, "each listener gets its own copy (the first one's edit did not reach it)")
+  check(G.Game.result.amount == 60, "a listener editing its payload changes nothing")
+  local t3 = A.Table()
+  check(t3.state == "DONE" and t3.result and t3.result.winner == "Kumlust" and t3.result.amount == 60,
+    "API.Table carries the result once settled")
+  check(A.Playing() == false, "API.Playing: not after the round")
+
+  local rr = A.RecentRounds(5)
+  check(#rr == 1 and rr[1].winner == "Kumlust" and rr[1].loser == "Dps2" and rr[1].amount == 60
+    and rr[1].rolls.Kumlust == 90 and rr[1].rolls.Dps2 == 30 and rr[1].id == heardRound.id, "API.RecentRounds")
+  rr[1].amount = 0; rr[1].rolls.Kumlust = 1; rr[2] = {}
+  local rr2 = A.RecentRounds()
+  check(#rr2 == 1 and rr2[1].amount == 60 and rr2[1].rolls.Kumlust == 90 and BiSGambaDB.history[1].rolls.Kumlust == 90,
+    "a rounds answer is a copy, rolls too")
+  check(#A.RecentRounds(0) == 0 and #A.RecentRounds("junk") == 1, "a count of 0 is none; junk means the default")
+  check(A.Standing("Kumlust").net == 45, "the board took the new round (-15 + 60)")
+
+  -- taken off: the next round is not told to them
+  A.UnregisterCallback("Second", "BiSGamba_RoundEnded")
+  A.UnregisterCallback("Breaks", "BiSGamba_RoundEnded")
+  check(A.UnregisterCallback("Never", "BiSGamba_RoundEnded") == true, "unregistering a stranger is harmless")
+  heardRound = nil
+  A.UnregisterCallback("Tester", "BiSGamba_RoundEnded")
+  SlashCmdList.BISGAMBA("reset")
+  SlashCmdList.BISGAMBA("start 100")
+  fire("CHAT_MSG_RAID", "1", "Dps2")
+  SlashCmdList.BISGAMBA("go")
+  fire("CHAT_MSG_SYSTEM", "Kumlust rolls 80 (1-100)")
+  fire("CHAT_MSG_SYSTEM", "Dps2 rolls 70 (1-100)")
+  SlashCmdList.BISGAMBA("end")
+  check(G.Game.state == "DONE" and heardRound == nil and heardTimes == 1, "after UnregisterCallback nothing is told")
+
+  -- Open: shows the window; in combat it waits for the fight, the way the player's own click does
+  G.UI.frame:Hide()
+  check(A.Open() == true and G.UI.frame.shown, "API.Open shows the window")
+  G.UI.frame:Hide()
+  inCombat = true; fire("PLAYER_REGEN_DISABLED")
+  local o2, wo = A.Open()
+  check(o2 == false and wo == "after combat" and not G.UI.frame.shown, "API.Open in combat: after combat")
+  inCombat = false; fire("PLAYER_REGEN_ENABLED")
+  check(G.UI.frame.shown, "and it opens when the fight ends")
+
+  -- a fault inside answers nil, "error" - never an error
+  local keepBoard = G.Board
+  G.Board = function() error("broken inside") end
+  local okb, vb, wb = pcall(A.Leaderboard)
+  check(okb and vb == nil and wb == "error", "a fault inside: nil, error - never thrown")
+  G.Board = keepBoard
+
+  SlashCmdList.BISGAMBA("reset")
+  BiSGambaDB.payDiff, BiSGambaDB.boardScope = keepPay, keepScope
+  check(books ~= snapshot(), "(the rounds played above did change the books - so the snapshot can see a change)")
+  inRaid = false
+end
+
+-- the allowed BiSGamba* globals: the addon, its saved table, its API, its slash names, its named frames
+do
+  local allowed = { BiSGamba = true, BiSGambaDB = true, BiSGambaAPI = true }
+  local bad = {}
+  for k, v in pairs(_G) do
+    if type(k) == "string" and k:find("^BiSGamba") and not allowed[k]
+      and not (type(v) == "table" and getmetatable(v) == Frame) then
+      bad[#bad + 1] = k
+    end
+  end
+  check(#bad == 0, "no BiSGamba* global but the allowed ones and named frames: " .. table.concat(bad, ", "))
+end
 
 -- WHAT A RAID'S CHATTER COSTS, IN CLIENT CALLS (7 Oct 2026). BiSHealing asked the client ~630,000
 -- things a second and every suite was green; Arn: "make sure stuff like this does not happen".

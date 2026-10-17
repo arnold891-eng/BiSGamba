@@ -14,6 +14,7 @@ Read ../_bisdev/CLAUDE.md first.
   - `UI` (2d/3d seat grid)
   - Options (the `Own` owners)
   - slash commands (`/bisgamba` main; `/gamba`, `/gamble` kept as aliases)
+- `API.lua`: `BiSGambaAPI` (major 1, version 1), the last TOC line, for other addons (playbook 5a). Read-only copies (leaderboard, standing, debts, recent rounds, the table) plus `Open()`; the header is its documentation. Event `BiSGamba_RoundEnded`, fired from `Book` through `G.Fire`, which API.lua sets. Nothing in it moves gold or edits the books.
 - `Libs/`: embedded copies of LibBiSComm-1.0, RezComm-1.0 and BiSTheme Console/Options. See the libs rules in `../_bisdev/CLAUDE.md`.
 - `dev/tests.lua`: the headless harness. It loads every Lua file the TOC lists, in order, and needs the addon to expose `BiSGamba` (as `G`) and its event frame as `G._ev`. It fails if an internal leaks into `_G` or if the `dbver` migrations break. Use `runTimers(maxDelay)` for countdowns. `dev/harness.lua` is only a shim that `dofile`s it.
 - `dev/release.ps1`: builds the zip (without `dev/` or the dotfiles) and uploads it to CurseForge project 1682133. It sends the top entry of `CHANGELOG.md` as the changelog.

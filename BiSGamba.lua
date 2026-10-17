@@ -1230,6 +1230,12 @@ local function Book(id, winner, loser, amount, guild)
   while #db.history > 50 do table.remove(db.history) end
   Game.state = "DONE"
   UI:OnResult(winner, loser)
+  -- other addons hear it through BiSGambaAPI (API.lua sets G.Fire, and pcalls every listener);
+  -- only a round new to this client is told, never the duplicate skipped above
+  if G.Fire then
+    pcall(G.Fire, "BiSGamba_RoundEnded", { id = id, winner = winner, loser = loser, amount = amount,
+      high = Game.high, low = Game.low, max = Game.max, host = Game.host, at = Now() })
+  end
 end
 
 function Game.Settle(winner, loser)
