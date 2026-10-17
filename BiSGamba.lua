@@ -812,11 +812,15 @@ Game = { state = "IDLE", players = {}, order = {}, max = 100, host = nil }
 G.Game = Game
 
 --- What this table is called, for people reading chat rather than the window.
-local function GameName() return "HIGH / LOW" end
+local function GameName() return Game.team and "TEAM ROLL" or "HIGH / LOW" end
 
 --- What it costs to lose, in words. With the difference rule the damage depends
 --- on the spread, so give the worst case rather than leaving people guessing.
 local function Stakes()
+  if Game.team then
+    return db.payDiff and "each loser pays one winner their share of the gap"
+      or "each loser pays one winner their share of the wager"
+  end
   if db.payDiff then
     return ("low pays high the gap, up to %s"):format(Gold(Game.max - 1))
   end
@@ -860,6 +864,9 @@ local function Fresh(max)
   Game.tied, Game.result, Game.highName, Game.tieKind = nil, nil, nil, nil
   Game.high, Game.low = nil, nil
   Game.countdownEnd = nil
+  -- the team game (17 Oct 2026): who is on which side, in the order they were dealt, and the
+  -- wager the sides play for once the audible has evened it out
+  Game.teamOf, Game.teamList, Game.teamWager, Game.winTeam = {}, { A = {}, B = {} }, nil, nil
 end
 
 -- host side -------------------------------------------------------------------
@@ -876,6 +883,7 @@ function Game.Add(name, quiet)
   Comm.Send("JOIN", name)
   if not quiet then Print(T.text("ink2", name) .. " is in") end
   UI:Refresh()
+  if not quiet then UI:Seated(name) end
 end
 
 --- Take somebody off the table. Also only while it is open: once you have been
@@ -890,7 +898,7 @@ function Game.Remove(name)
   UI:Refresh()
 end
 
-function Game.Open(max)
+function Game.Open(max, team)
   if Game.Remote() then Warn(Game.host .. " is running the table") return end
   max = tonumber(max) or tonumber(db.wager) or 100
   max = math.max(2, math.min(MAX_ROLL, math.floor(max)))
@@ -899,7 +907,10 @@ function Game.Open(max)
   Game.host = MyName()
   Game.state = "JOIN"
   Fresh(max)
-  Comm.Send("OPEN", max)
+  -- A TEAM GAME (Arn, 17 Oct 2026): `max` is the wager; the sides and each player's roll are dealt
+  -- when the rolls are called (Game.Deal)
+  Game.team = team and true or false
+  Comm.Send("OPEN", max, Game.team and "T" or "-")
   Sound.Play("open")
   Game.Add(MyName(), true)
   Say(("BiS Gamba · %s · /roll %d · %s · 1 to join, -1 to leave"):format(GameName(), max, Stakes()))
@@ -934,10 +945,73 @@ function Game.LastCall(secs)
   end)
 end
 
+--- THE TEAM GAME'S DEAL (Arn, 17 Oct 2026: "open a team game, people join and only works if even
+--- number of players play, the game auto randomizes them into teams, if wager 100 it tell them what
+--- each team member has to roll, so 10 players 5 each side each rolls 20 it adds it up and losing
+--- team pays winning team"; "each loser pays one winner"; "both teams roll again"; and of a wager
+--- that does not split: "it called an audible - wager lowered to 99 to split evenly").
+--- Answers true when the sides are dealt; the table's roll range becomes each player's share.
+--- Each player's roll when `wager` is shared `half` ways: the nearest even split, up or down; exactly
+--- as close either way, up.
+function Game.Split(wager, half)
+  local per = math.floor(wager / half)
+  if wager % half ~= 0 and (wager - per * half) >= ((per + 1) * half - wager) then per = per + 1 end
+  return per
+end
+
+function Game.Deal()
+  local n = #Game.order
+  if n < 4 or n % 2 == 1 then
+    Warn(("a team game needs an even number of players, 4 or more - %d in"):format(n))
+    return false
+  end
+  local half = n / 2
+  -- THE NEAREST EVEN SPLIT, UP OR DOWN (Arn: "it round up or down on what ever the wager is divisible
+  -- evenly so 3 each side 100 wont go up to 101"): 100 three ways is 99, not 102. Exactly as close
+  -- either way, it goes UP ("what ever is closer ... if it goes higher than lower is chooses")
+  local per = Game.Split(Game.max, half)
+  if per < 2 then Warn(("/roll %d is too little to share between %d a side"):format(Game.max, half)) return false end
+  local wager = per * half
+  if wager ~= Game.max then
+    Say(("BiS Gamba · audible · %d does not split %d ways · the wager is %d"):format(Game.max, half, wager))
+  end
+  -- shuffled, then dealt down the middle
+  local deck = {}
+  for i, name in ipairs(Game.order) do deck[i] = name end
+  for i = #deck, 2, -1 do
+    local j = math.random(i)
+    deck[i], deck[j] = deck[j], deck[i]
+  end
+  Game.teamOf, Game.teamList = {}, { A = {}, B = {} }
+  for i, name in ipairs(deck) do
+    local side = i <= half and "A" or "B"
+    Game.teamOf[name] = side
+    local l = Game.teamList[side]
+    l[#l + 1] = name
+  end
+  Game.teamWager, Game.max = wager, per
+  Comm.Send("TEAMS", per, wager)
+  for _, side in ipairs({ "A", "B" }) do
+    for _, name in ipairs(Game.teamList[side]) do Comm.Send("TM", name, side) end
+  end
+  local function names(side)
+    local l = {}
+    for i, name in ipairs(Game.teamList[side]) do l[i] = Bare(name) end
+    local s = table.concat(l, ", ")
+    return #s > 100 and (s:sub(1, 97) .. "...") or s
+  end
+  Say(("BiS Gamba · team A: %s"):format(names("A")))
+  Say(("BiS Gamba · team B: %s"):format(names("B")))
+  UI:Progress("dealing the sides")
+  return true
+end
+
 function Game.StartRolls()
   if Game.state ~= "JOIN" or not Game.IsHost() then return end
   local n = #Game.order
-  if n < 2 and not db.autoJoin then Warn("need at least two people at the table") return end
+  if Game.team then
+    if not Game.Deal() then return end
+  elseif n < 2 and not db.autoJoin then Warn("need at least two people at the table") return end
   Game.countdownEnd = nil
   Game.state = "ROLL"
   latecomers = {}
@@ -1119,6 +1193,7 @@ function Game.Check(force)
       list = Sorted("roll")
     end
     if #list < 2 then Warn("not enough rolls to settle"); Game.state = "DONE"; Comm.Send("CLOSE"); UI:Refresh(); return end
+    if Game.team then return Game.SettleTeams() end
     local high, low = list[1].roll, list[#list].roll
     local highs, lows = {}, {}
     for _, p in ipairs(list) do
@@ -1276,6 +1351,54 @@ function Game.Settle(winner, loser)
   else UI:Event(Bare(winner) .. " beat " .. Bare(loser), "ink2") end
   local owes = Ledger.Net(loser)
   if owes > amount then Print(("%s now owes %s total"):format(loser, Gold(owes))) end
+end
+
+--- A side's total: every roll on it added up (a forfeit counts 0).
+function Game.TeamSum(side)
+  local s = 0
+  for _, name in ipairs((Game.teamList and Game.teamList[side]) or {}) do
+    local p = Game.players[name]
+    s = s + ((p and p.roll) or 0)
+  end
+  return s
+end
+
+--- What each loser pays their winner: the gap shared out, or each player's share of the wager.
+function Game.TeamAmount(sW, sL)
+  local half = #(Game.teamList.A or {})
+  if half < 1 then return nil end
+  if db.payDiff then return math.max(1, math.floor((sW - sL) / half)) end
+  return Game.max
+end
+
+--- Everybody rolled: the bigger total wins; a tie rolls again; then each loser pays one winner.
+function Game.SettleTeams()
+  local sA, sB = Game.TeamSum("A"), Game.TeamSum("B")
+  if sA == sB then return Game.Redo(("the teams tied at %d"):format(sA)) end
+  local W, L = (sA > sB) and "A" or "B", (sA > sB) and "B" or "A"
+  local sW, sL = math.max(sA, sB), math.min(sA, sB)
+  local amount = Game.TeamAmount(sW, sL)
+  Game.winTeam, Game.high, Game.low = W, sW, sL
+  Say(("BiS Gamba · team %s %d over team %s %d · each loser pays %s"):format(W, sW, L, sL, Gold(amount)))
+  local pairs_ = {}
+  for i, w in ipairs(Game.teamList[W]) do
+    local l = Game.teamList[L][i]
+    if l then
+      local id = NextRoundID()
+      local guild = GuildFor(w, l)
+      Comm.Send("TDONE", w, l, amount, sW, sL, id, guild or "-")
+      Book(id, w, l, amount, guild)
+      pairs_[#pairs_ + 1] = ("%s > %s"):format(Bare(l), Bare(w))
+    end
+  end
+  local s = table.concat(pairs_, ", ")
+  Say(("BiS Gamba · who pays whom: %s"):format(#s > 200 and (s:sub(1, 197) .. "...") or s))
+  local me = MyName()
+  local mine = Game.teamOf[me]
+  UI:Progress("adding up the sides", 1)
+  if mine == W then UI:Event("your team wins - " .. Gold(amount) .. " to you", "good")
+  elseif mine == L then UI:Event("your team lost - you pay " .. Gold(amount), "warn") end
+  UI:OnResult(nil, nil)
 end
 
 function Game.End()
@@ -1568,8 +1691,15 @@ end
 function Game.Replay(who)
   if not Game.IsHost() or not Game.Active() then return end
   local function send(...) Comm.SendTo(who, ...) end
-  send("OPEN", Game.max)
+  -- a team table opens at its wager; once dealt, the sides follow the seats
+  send("OPEN", Game.team and (Game.teamWager or Game.max) or Game.max, Game.team and "T" or "-")
   for _, name in ipairs(Game.order) do send("JOIN", name) end
+  if Game.team and Game.teamWager and (Game.state == "ROLL" or Game.state == "TIE") then
+    send("TEAMS", Game.max, Game.teamWager)
+    for _, side in ipairs({ "A", "B" }) do
+      for _, name in ipairs(Game.teamList[side]) do send("TM", name, side) end
+    end
+  end
   if Game.state == "ROLL" or Game.state == "TIE" then
     send("GO")
     for _, name in ipairs(Game.order) do
@@ -1679,6 +1809,7 @@ function Game.OnComm(msg, sender)
     Game.host = sender
     Game.state = "JOIN"
     Fresh(max)
+    Game.team = parts[3] == "T"
     local hint = (db.neverOpen or db.autoOpen == false) and "  (/bisgamba to open the table)" or ""
     Print(sender .. " opened a table: /roll " .. max .. hint)
     UI:Event(Bare(sender) .. " deals - /roll " .. max, "gold")
@@ -1690,7 +1821,11 @@ function Game.OnComm(msg, sender)
   if sender ~= Game.host then return end
   local name = parts[2]
   if op == "JOIN" then
-    if name and name ~= "" and (Game.state == "JOIN" or Game.state == "ROLL") then Player(name); UI:Refresh() end
+    if name and name ~= "" and (Game.state == "JOIN" or Game.state == "ROLL") then
+      local new = not Game.players[name]
+      Player(name); UI:Refresh()
+      if new and Game.state == "JOIN" then UI:Seated(name) end
+    end
   elseif op == "LEAVE" then
     if name and name ~= "" then Drop(name); UI:Refresh() end
   elseif op == "CALL" then
@@ -1700,6 +1835,40 @@ function Game.OnComm(msg, sender)
       Sound.Play("call")
       UI:Refresh()
     end
+  elseif op == "TEAMS" then
+    -- the host dealt the sides: each player's roll and the wager after any audible
+    local per, wager = tonumber(parts[2]), tonumber(parts[3])
+    if Game.team and Game.state == "JOIN" and per and wager and per >= 2 then
+      Game.max, Game.teamWager = per, wager
+      Game.teamOf, Game.teamList = {}, { A = {}, B = {} }
+      UI:Progress("dealing the sides")
+    end
+  elseif op == "TM" then
+    local side = parts[3]
+    if Game.team and name and Game.players[name] and (side == "A" or side == "B") and not Game.teamOf[name] then
+      Game.teamOf[name] = side
+      local l = Game.teamList[side]
+      l[#l + 1] = name
+      UI:Refresh()
+    end
+  elseif op == "TDONE" then
+    -- A TEAM RESULT is believed only if it follows from the rolls we watched: the two named are on
+    -- opposite sides, the totals are the sums of their sides' rolls, the winner's side is bigger,
+    -- and the amount is what those totals make. One message per pair.
+    local w, l, amount = parts[2], parts[3], tonumber(parts[4])
+    local sW, sL, id = tonumber(parts[5]), tonumber(parts[6]), parts[7]
+    local tW, tL = Game.teamOf[w or ""], Game.teamOf[l or ""]
+    local ok = Game.team and (Game.state == "ROLL" or Game.state == "DONE") and tW and tL and tW ~= tL
+      and sW and sL and sW > sL and Game.TeamSum(tW) == sW and Game.TeamSum(tL) == sL
+      and amount and amount == Game.TeamAmount(sW, sL) and amount <= MAX_ROLL
+      and (Game.state == "ROLL" or Game.winTeam == tW)
+    if not ok then return end
+    if Game.state == "ROLL" then UI:Progress("adding up the sides", 1) end   -- the first pair only
+    Game.winTeam, Game.high, Game.low = tW, sW, sL
+    local guild = parts[8]
+    if guild == "-" or guild == "" then guild = nil end
+    Book(id, w, l, amount, TrustedGuild(guild, sender))
+    UI:OnResult(nil, nil)
   elseif op == "GO" then
     if Game.state == "JOIN" then Game.state = "ROLL"; Game.countdownEnd = nil; if not Game.CanRoll() then Sound.Play("go") end; UI:Refresh() end
   elseif op == "REDO" then
@@ -2776,6 +2945,18 @@ function UI:Build()
   stop:SetScript("OnClick", function() if not stop.off then Game.End() end end)
   self.endBtn = stop
 
+  -- THE TEAM GAME (17 Oct 2026): open a table where the sides are dealt at random when the rolls are
+  -- called; the number in the box is the wager, shared out as each player's roll
+  local teamB = SmallButton(f, "team", 40)
+  teamB:SetPoint("LEFT", stop, "RIGHT", 10, 0)
+  teamB.tip = "Open a team game: an even number of players, random sides, the wager shared out as each player's roll, each loser pays one winner"
+  teamB:SetScript("OnClick", function()
+    box:ClearFocus()
+    if teamB.off then return end
+    Game.Open(tonumber(box:GetText()), true)
+  end)
+  self.teamBtn = teamB
+
   -- YOUR BUTTONS, A COLUMN ON THE LEFT, IN THE ORDER A ROUND GOES (Arn, 17 Oct 2026: "the roll button
   -- on the left in the right order: join roll leave pay ... first if a table is opened join lights up,
   -- once joined leave lights up, once the game starts roll lights up, lose pay lights up"). The table's
@@ -2869,6 +3050,24 @@ function UI:Build()
   status:SetPoint("RIGHT", f, "RIGHT", -10, 0)
   status:SetJustifyH("LEFT")
   self.status = status
+
+  -- A PROGRESS BAR FOR THE MOMENTS THE TABLE "WORKS" (Arn, 17 Oct 2026: "lets give the game some of
+  -- the party invite progress bar things no double confirmations but progress bars to kinda indicate
+  -- stuff calculations determining sides etc"). A thin bar over the status line that fills, with
+  -- what it is doing beside it - dealing the sides, adding them up. Nothing waits on it; it says so.
+  local prog = CreateFrame("Frame", nil, f)
+  prog:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -72)
+  prog:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+  prog:SetHeight(4)
+  prog.bg = prog:CreateTexture(nil, "BACKGROUND")
+  prog.bg:SetAllPoints()
+  prog.bg:SetColorTexture(T.rgba("sunken", 1))
+  prog.fill = prog:CreateTexture(nil, "ARTWORK")
+  prog.fill:SetPoint("TOPLEFT"); prog.fill:SetPoint("BOTTOMLEFT")
+  prog.fill:SetWidth(1)
+  prog.fill:SetColorTexture(T.rgba("accent", 1))
+  prog:Hide()
+  self.prog = prog
 
   -- the seats
   local scene = CreateFrame("Frame", nil, f)
@@ -2986,6 +3185,7 @@ function UI:Build()
     local now = GetTime()
 
     if self.con then self.con:Paint() end   -- blink, rotate the slots, expire events
+    self:PaintProgress(now)
 
     -- the last call ticks once a second: redraw, and give the host a beat
     local left = Game.Countdown()
@@ -3006,7 +3206,9 @@ function UI:Build()
       end
     end
 
-    for _, seat in ipairs(self.seats) do
+    local every = { self.mySeat }               -- yours too: a cheer on the big seat must end as well
+    for _, s in ipairs(self.seats) do every[#every + 1] = s end
+    for _, seat in ipairs(every) do
       if seat.person and seat.restAt and now > seat.restAt then
         seat.restAt = nil; seat.anim = ANIM.stand
         pcall(seat.model.SetAnimation, seat.model, ANIM.stand)
@@ -3062,6 +3264,64 @@ local function GridLayout(self, n, minW)
   return w, (n == 0) and 44 or rows * CELL_H   -- empty is a short strip, not a full row
 end
 
+-- THE TEAM VIEW (Arn, 17 Oct 2026: "if its a team game its make us all the same size on the left
+-- people in the same team"): once the sides are dealt, your side on the left and theirs on the
+-- right, every seat the same size, each side's total over it and VS between. Not playing: A left.
+local TEAM_COLS, TEAM_GAP, TEAM_HEAD = 5, 44, 18
+local function TeamLayout(self, minW)
+  local scene = self.scene
+  Extremes()
+  local mine = Game.teamOf[MyName()] or "A"
+  local theirs = mine == "A" and "B" or "A"
+  local L, R = Game.teamList[mine] or {}, Game.teamList[theirs] or {}
+  local cols = math.max(1, math.min(TEAM_COLS, math.max(#L, #R)))
+  local rows = math.max(math.ceil(#L / cols), math.ceil(#R / cols), 1)
+  local blockW = cols * CELL_W
+  local w = math.max(2 * blockW + TEAM_GAP + 2 * PAD, MIN_W - ACT_W, minW or 0)
+  local x0 = w / 2 - TEAM_GAP / 2 - blockW
+  local x1 = w / 2 + TEAM_GAP / 2
+  local base = scene:GetFrameLevel() + 2
+  local i = 0
+  local function place(list, x)
+    for k, name in ipairs(list) do
+      i = i + 1
+      local seat = self.seats[i]
+      if seat then
+        local r, col = math.floor((k - 1) / cols), (k - 1) % cols
+        seat.cell:SetSize(CELL_W, CELL_H)
+        seat.cell:ClearAllPoints()
+        seat.cell:SetPoint("TOPLEFT", scene, "TOPLEFT", x + col * CELL_W, -TEAM_HEAD - r * CELL_H)
+        seat.cell:SetFrameLevel(base)
+        SizeSeat(seat)
+        FillSeat(seat, Game.players[name])
+      end
+    end
+  end
+  place(L, x0)
+  place(R, x1)
+  for k = i + 1, #self.seats do FillSeat(self.seats[k], nil) end
+  -- the sides' totals over them, live, and VS between
+  if not self.teamHeads then
+    local function fs() local s = scene:CreateFontString(nil, "OVERLAY", "GameFontNormal") return s end
+    self.teamHeads = { L = fs(), R = fs(), vs = fs() }
+  end
+  local h = self.teamHeads
+  local function word(side, you)
+    local who = you and "your team" or ("team " .. side)
+    return ("%s  %d"):format(who, Game.TeamSum(side))
+  end
+  h.L:ClearAllPoints(); h.L:SetPoint("TOP", scene, "TOPLEFT", x0 + blockW / 2, 0)
+  h.R:ClearAllPoints(); h.R:SetPoint("TOP", scene, "TOPLEFT", x1 + blockW / 2, 0)
+  h.vs:ClearAllPoints(); h.vs:SetPoint("TOP", scene, "TOPLEFT", w / 2, -TEAM_HEAD - 20)
+  local playing = Game.teamOf[MyName()] ~= nil
+  local won = Game.winTeam
+  h.L:SetText(T.text(won and (won == mine and "good" or "warn") or (playing and "gold" or "ink"), word(mine, playing)))
+  h.R:SetText(T.text(won and (won == theirs and "good" or "warn") or "ink", word(theirs, false)))
+  h.vs:SetText(T.text("muted", "VS"))
+  for _, s in pairs(h) do s:Show() end
+  return w, TEAM_HEAD + rows * CELL_H
+end
+
 --- The people at the table who are not you, in seat order.
 function UI.Others()
   local me, out = MyName(), {}
@@ -3086,10 +3346,28 @@ function UI:FillMine()
   FillSeat(self.mySeat, p)
 end
 
+--- The team view is on once a team game's sides are dealt.
+function UI.TeamView()
+  return Game.team and Game.teamList ~= nil and #(Game.teamList.A or {}) > 0
+end
+
 function UI:Layout()
   local n = math.min(#UI.Others(), COLS * MAX_ROWS)
-  self:FillMine()
-  local w, h = GridLayout(self, n)
+  local teamView = UI.TeamView()
+  -- in the team view you are a seat on your side like everyone else; the big seat steps aside and
+  -- your buttons move up into its place
+  if teamView then
+    if self.mySeat then self.mySeat.cell:Hide() end
+    self.joinBtn:ClearAllPoints()
+    self.joinBtn:SetPoint("TOPLEFT", self.frame, "TOPLEFT", PAD, -HEAD_H)
+  else
+    self:FillMine()
+    self.joinBtn:ClearAllPoints()
+    self.joinBtn:SetPoint("TOPLEFT", self.frame, "TOPLEFT", PAD, -(HEAD_H + ROLL_H + BIG_ART_H + 6 + TEXT_H + 4))
+    if self.teamHeads then for _, s in pairs(self.teamHeads) do s:Hide() end end
+  end
+  local layout = teamView and function(_, _, minW) return TeamLayout(self, minW) end or GridLayout
+  local w, h = layout(self, n)
   self.scene:SetHeight(h)
   local dh = 0
   if self.debtPanel:IsShown() then
@@ -3111,18 +3389,52 @@ function UI:Layout()
   -- four buttons; too narrow for its height, the seats get the extra width (and stay centred); too
   -- wide, the room goes at the bottom
   -- the left column: your big seat and two rows of buttons under it
-  local left = ROLL_H + BIG_ART_H + 6 + TEXT_H + 4 + 2 * 28
+  local left = teamView and (2 * 28) or (ROLL_H + BIG_ART_H + 6 + TEXT_H + 4 + 2 * 28)
   local content = math.max(h + dh + bh, left)
   local H = HEAD_H + content + PAD + 28
   local W = w + ACT_W
   if W < H * RATIO then
     W = math.floor(H * RATIO + 0.5)
-    w = GridLayout(self, n, W - ACT_W)
+    w = layout(self, n, W - ACT_W)
   else
     H = math.floor(W / RATIO + 0.5)
   end
   self.frame:SetSize(W, H)
-  if n == 0 then self.empty:Show() else self.empty:Hide() end
+  if n == 0 and not teamView then self.empty:Show() else self.empty:Hide() end
+end
+
+--- Somebody sat down (Arn: "a new person joins, a small progress bar fast like 1 second, determining
+--- team etc."): one second, their name, and at a team table whether it can be dealt yet.
+function UI:Seated(name)
+  local n = #Game.order
+  local what = ("%s joins · %d in"):format(Bare(name) or "?", n)
+  if Game.team then
+    what = what .. ((n >= 4 and n % 2 == 0) and " · even, ready to deal" or " · needs an even number, 4 or more")
+  end
+  self:Progress(what, 1)
+end
+
+--- Run the progress bar for `secs`, saying `what` in the status line while it fills.
+UI.PROGRESS = 1.2
+function UI:Progress(what, secs)
+  self.progWhat, self.progAt, self.progFor = what, GetTime(), secs or UI.PROGRESS
+  if self.prog then self.prog:Show(); self.prog.fill:SetWidth(1) end
+  if self.status then self.status:SetText(T.text("accent", what .. "...")) end
+  if self.con then self.con:Say(what .. "...", "accent") end
+end
+
+function UI:PaintProgress(now)
+  local p = self.prog
+  if not (p and self.progAt and p:IsShown()) then return end
+  local frac = ((now or GetTime()) - self.progAt) / self.progFor
+  if frac >= 1 then
+    p:Hide()
+    self.progAt, self.progWhat = nil, nil
+    self:Refresh()                       -- the status line goes back to the table
+    return
+  end
+  local w = p:GetWidth()
+  if type(w) == "number" and w > 0 then p.fill:SetWidth(math.max(1, w * frac)) end
 end
 
 -- An event line in the header prompt: jumps in over the slots, holds, then the
@@ -3226,6 +3538,9 @@ function UI:Refresh()
     else st:SetText(T.text("muted", "no result")) end
   end
 
+  -- a bar running: the status line says what it is doing until it is done (UI:Progress)
+  if self.progWhat then st:SetText(T.text("accent", self.progWhat .. "...")) end
+
   local open = s == "JOIN" and Game.IsHost()
   local counting = Game.Countdown() ~= nil
   self.startBtn.text:SetText(open and (counting and "start now" or "start rolls") or "start")
@@ -3237,6 +3552,8 @@ function UI:Refresh()
   SetOff(self.callBtn, not open or counting)
   SetHot(self.endBtn, running and (s == "ROLL" or s == "TIE"))
   SetOff(self.endBtn, not running)
+  SetHot(self.teamBtn, Game.team and Game.Active())
+  SetOff(self.teamBtn, not canOpen or Game.Active())
   -- ONLY THE NEXT THING IS LIT (17 Oct 2026): a table open and you out - join; in - leave; your
   -- turn - roll; you lost - pay. The others are dim, in their places.
   local joinNow = s == "JOIN" and not seated
@@ -3476,6 +3793,20 @@ end
 
 -- the round is settled: everybody reacts by where they landed
 function UI:OnResult(winner, loser)
+  -- a team game: one side cheers, the other cries, all of them at once
+  if Game.team and Game.winTeam then
+    self:Refresh()
+    local me = MyName()
+    local mine = Game.teamOf[me]
+    Sound.Play(mine == Game.winTeam and "win" or mine and "lose" or "done")
+    for _, name in ipairs(Game.order) do
+      local seat = SeatOf(name)
+      if seat and Game.teamOf[name] then
+        self:Emote(seat, Game.teamOf[name] == Game.winTeam and ANIM.cheer or ANIM.cry, 8)
+      end
+    end
+    return
+  end
   self:Refresh()
   local me = MyName()
   Sound.Play(me == winner and "win" or me == loser and "lose" or "done")
@@ -3798,6 +4129,7 @@ local function Help()
     "/bisgamba hidden       how often the game hid chat from the addon this session",
     "/bisgamba scope [guild|all]   whether pug rounds count on the board",
     "/bisgamba dr [name]   deathroll one player in your group or guild",
+    "/bisgamba team [gold]   a team game: even players, random sides, losers pay winners one to one",
     "/bisgamba wipestats yes       throw away your ledger",
     "/bisgamba wipestats all       ask everyone with the addon to wipe theirs too",
     "/bisgamba paid A B     mark A's debt to B paid",
@@ -3952,6 +4284,8 @@ local function Slash(msg)
   elseif cmd == "adopt" then
     local who = rest ~= "" and Bare(rest) or (G.BestLedger())
     if who then G.Adopt(who) else Print("nobody has a fuller ledger than yours - open the board and hit sync first") end
+  elseif cmd == "team" then
+    Game.Open(tonumber(rest), true)
   elseif (cmd == "dr" or cmd == "deathroll") and G.Deathroll then
     G.Deathroll.Slash(rest)
   elseif cmd == "scope" then

@@ -2388,6 +2388,107 @@ do
   check(#bad == 0, "no user-facing text says /gamba as the command to type: " .. table.concat(bad, ", "))
 end
 
+---------------------------------------------------------------- the team game (17 Oct 2026)
+-- Arn: "open a team game, people join and only works if even number of players play, the game auto
+-- randomizes them into teams, if wager 100 it tell them what each team member has to roll ... losing
+-- team pays winning team"; "each loser pays one winner"; "both teams roll again"; the audible:
+-- "round up or down on what ever the wager is divisible evenly ... what ever is closer"
+do
+  -- the audible's arithmetic, against his own examples
+  check(G.Game.Split(100, 5) == 20, "100, 5 a side: everyone rolls 20")
+  check(G.Game.Split(100, 3) == 33, "100, 3 a side: 99, not 102 - the closer")
+  check(G.Game.Split(10, 3) == 3, "10, 3 a side: 9, not 12")
+  check(G.Game.Split(101, 2) == 51, "101, 2 a side: 100 and 102 are as close - up, 102")
+  check(G.Game.Split(104, 3) == 35, "104, 3 a side: 105 is closer than 102")
+
+  inRaid = true
+  SlashCmdList.BISGAMBA("reset")
+  BiSGambaDB.debts = {}
+  G.UI:Show()
+  local keepDiff = BiSGambaDB.payDiff
+  BiSGambaDB.payDiff = true
+  local before = #said
+  SlashCmdList.BISGAMBA("team 101")
+  check(G.Game.team and G.Game.state == "JOIN" and G.Game.max == 101, "a team table opens at its wager")
+  check(table.concat(said, "\n", before + 1):find("TEAM ROLL", 1, true), "and says so in chat")
+  fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+  check(#G.Game.order == 3, "three in")
+  -- A ONE-SECOND BAR WHEN SOMEBODY SITS DOWN (Arn: "a new person joins, a small progress bar fast
+  -- like 1 second, determining team etc.")
+  check(G.UI.prog.shown and G.UI.progFor == 1, "a join runs a one-second bar")
+  check(strip(G.UI.status.text_):find("Kumsecration joins · 3 in · needs an even number", 1, true),
+        "and says whether the sides can be dealt: " .. strip(G.UI.status.text_))
+  _G.__now = (_G.__now or 0) + 2
+  G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+  check(not G.UI.prog.shown and G.UI.progWhat == nil, "a second later the bar is gone")
+  SlashCmdList.BISGAMBA("go")
+  check(G.Game.state == "JOIN", "three is odd: the rolls are not called")
+  fire("CHAT_MSG_RAID", "1", "Dps1")
+  before = #said
+  SlashCmdList.BISGAMBA("go")
+  check(G.Game.state == "ROLL", "four: the rolls are called")
+  check(G.Game.max == 51 and G.Game.teamWager == 102, "101 two ways: the audible makes it 102, everyone rolls 51")
+  local heard = table.concat(said, "\n", before + 1)
+  check(heard:find("audible", 1, true) and heard:find("team A:", 1, true) and heard:find("team B:", 1, true),
+        "the audible and both sides are said in chat")
+  local A, B = G.Game.teamList.A, G.Game.teamList.B
+  check(#A == 2 and #B == 2, "two a side")
+  check(G.UI.prog.shown and strip(G.UI.status.text_):find("dealing the sides", 1, true),
+        "a bar while the sides are dealt: " .. strip(G.UI.status.text_))
+  local seen = {}
+  for _, n in ipairs(A) do seen[n] = true end
+  for _, n in ipairs(B) do seen[n] = true end
+  check(seen.Kumlust and seen.Dps2 and seen.Kumsecration and seen.Dps1, "everyone dealt, nobody twice")
+  runTimers(1)
+  local tm = 0
+  for _, m in ipairs(addon) do if m:find("^TM\t") then tm = tm + 1 end end
+  check(tm == 4, "clients are told each side: " .. tm)
+
+  local function roll(name, n) fire("CHAT_MSG_SYSTEM", ("%s rolls %d (1-%d)"):format(name, n, G.Game.max)) end
+  roll(A[1], 30); roll(A[2], 20); roll(B[1], 25); roll(B[2], 25)
+  runTimers()
+  check(G.Game.state == "ROLL" and G.Game.players[A[1]].roll == nil, "50 all: both teams roll again")
+  roll(A[1], 40); roll(A[2], 30); roll(B[1], 10); roll(B[2], 20)
+  runTimers()
+  check(G.Game.state == "DONE" and G.Game.winTeam == "A", "70 over 30: team A wins")
+  local function owes(a, b) for _, d in ipairs(BiSGambaDB.debts) do if d.from == a and d.to == b then return d.amount end end return 0 end
+  check(owes(B[1], A[1]) == 20 and owes(B[2], A[2]) == 20, "each loser pays one winner their share of the gap: 40 / 2 = 20")
+  check(owes(B[1], A[2]) == 0 and owes(B[2], A[1]) == 0, "one winner each, never two")
+
+  -- the view: your side on the left, the same size; theirs on the right; totals over them
+  G.UI:Refresh()
+  check(not G.UI.mySeat.cell.shown, "the big seat steps aside")
+  check(strip(G.UI.teamHeads.L.text_):find("your team", 1, true), "your side on the left: " .. strip(G.UI.teamHeads.L.text_))
+  local mine = G.Game.teamOf.Kumlust
+  check(strip(G.UI.teamHeads.L.text_):find(tostring(G.Game.TeamSum(mine)), 1, true), "with its total")
+  check(math.abs(G.UI.frame.w / G.UI.frame.h - 1.43) < 0.01, "still 1.43:1")
+  fitsIn(BiSGambaFrame, "the team table")
+
+  -- a client believes a team result only if it follows from the rolls it saw
+  BiSGambaDB.debts = {}
+  SlashCmdList.BISGAMBA("reset")
+  from("Dps2", "OPEN", "100", "T")
+  check(G.Game.team and G.Game.host == "Dps2", "a client follows a team table")
+  for _, n in ipairs({ "Dps2", "Kumlust", "Kumsecration", "Dps1" }) do from("Dps2", "JOIN", n) end
+  from("Dps2", "TEAMS", "50", "100")
+  from("Dps2", "TM", "Dps2", "A"); from("Dps2", "TM", "Kumlust", "A")
+  from("Dps2", "TM", "Kumsecration", "B"); from("Dps2", "TM", "Dps1", "B")
+  from("Dps2", "GO")
+  from("Dps2", "ROLL", "Dps2", "40"); from("Dps2", "ROLL", "Kumlust", "30")
+  from("Dps2", "ROLL", "Kumsecration", "10"); from("Dps2", "ROLL", "Dps1", "20")
+  check(G.Game.max == 50 and G.Game.teamOf.Kumlust == "A", "with the sides the host dealt")
+  from("Dps2", "TDONE", "Dps2", "Dps1", "999", "70", "30", "Dps2:t1", "-")
+  check(owes("Dps1", "Dps2") == 0, "a forged amount is not believed")
+  from("Dps2", "TDONE", "Dps2", "Dps1", "20", "71", "30", "Dps2:t1", "-")
+  check(owes("Dps1", "Dps2") == 0, "nor a total the rolls do not add up to")
+  from("Dps2", "TDONE", "Dps2", "Dps1", "20", "70", "30", "Dps2:t1", "-")
+  from("Dps2", "TDONE", "Kumlust", "Kumsecration", "20", "70", "30", "Dps2:t2", "-")
+  check(owes("Dps1", "Dps2") == 20 and owes("Kumsecration", "Kumlust") == 20, "the true pairs are booked")
+  SlashCmdList.BISGAMBA("reset")
+  BiSGambaDB.payDiff = keepDiff
+  BiSGambaDB.debts = {}
+end
+
 ---------------------------------------------------------------- deathroll (Deathroll.lua)
 -- Arn, 16 Oct 2026: "maybe we do this for our bis gamba so people can deathroll each other" -
 -- "maybe its only challenging people in same raid or party or guild"

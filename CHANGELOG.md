@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The team game.** Press **team** (or `/bisgamba team 100`) and the number is the wager for a team table. People join as usual; it needs an even number, 4 or more. When the rolls are called the sides are dealt at random and the wager is shared out: 100 between 5 a side is everyone `/roll 20`. If it doesn't split evenly the table calls an **audible** and moves the wager to the nearest even split (100 three ways is 99; exactly in between goes up). Each side's rolls are added up; a tie means both sides roll again; then **each loser pays one winner**, their share of the gap (or of the wager, with flat pay). Your side stands on the left, theirs on the right, every seat the same size, each side's total over it.
+- **The table, redone.** You stand big, in 3D, on the left, with your buttons under you - join, roll, leave, pay - and only the next one to press is lit. Everyone else sits on the right. The window keeps the BiS 1.43:1 shape.
+- **Short progress bars** when the table is working: a second when somebody joins ("Mare joins · 4 in · even, ready to deal"), while the sides are dealt, while they are added up.
+
 - **Deathroll, as a duel.** You stand on the left in 3D, your opponent on the right, the rolls run down the middle. Pick them from your party or raid (a list you scroll), or type a guildmate's whole name. Type the gold: the rolls start there, so 500g is `/roll 500` - or tick "for fun" to roll without betting. They accept or decline. The challenger rolls first; the button says your exact roll (`/roll 450` after they rolled 450), and whoever rolls a 1 pays. The winner cheers, the loser cries. The gold goes in the same debts book as a high/low round, with the same "pay" and trade, and on the leaderboard. Button bottom left on the table, or `/bisgamba dr <name>`.
 
 - **Your debts first.** The debts list shows what you owe and are owed at the top. Everybody else's fold into one line ("4 debts between others") that opens if you want to see them.
