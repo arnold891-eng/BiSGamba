@@ -344,13 +344,21 @@ do
   fh:close()
 end
 assert(#TOC >= 2, "the TOC lists files")
-assert(TOC[#TOC - 1] == "BiSGamba.lua" and TOC[#TOC] == "API.lua",
-  "the addon is the last TOC line but one; API.lua (BiSGambaAPI) loads after everything it calls")
+-- Deathroll.lua (16 Oct 2026) builds on BiSGamba.lua's kit, so it comes straight after it
+assert(TOC[#TOC - 2] == "BiSGamba.lua" and TOC[#TOC - 1] == "Deathroll.lua" and TOC[#TOC] == "API.lua",
+  "BiSGamba.lua, then Deathroll.lua, then API.lua (BiSGambaAPI) last - it loads after everything it calls")
 for _, f in ipairs(TOC) do
   local fn = assert(loadfile(f), "TOC lists a file that does not exist: " .. f)
   fn("BiSGamba")
 end
 local G = BiSGamba
+-- every seat, yours included: since 17 Oct you stand big on the left (G.UI.mySeat), not in the grid
+local function allSeats()
+  local out = {}
+  if G.UI and G.UI.mySeat then out[1] = G.UI.mySeat end
+  for _, s in ipairs((G.UI and G.UI.seats) or {}) do out[#out + 1] = s end
+  return out
+end
 local ev
 for _, name in ipairs({ "BiSGambaFrame" }) do end
 -- find the event frame: the last CreateFrame("Frame") with an OnEvent script
@@ -499,7 +507,7 @@ local function sent(op) for _, m in ipairs(addon) do if m:find("^" .. op) then r
 check(sent("OPEN\t200") and sent("JOIN\tDps2") and sent("GO") and sent("ROLL\tDps1\t180") and sent("DONE\tDps1\tDps2\t160\t180\t20"), "host broadcast the round")
 -- emotes
 local function seatAnim(name)
-  for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == name then return s.model.anim, s.model.model end end
+  for _, s in ipairs(allSeats()) do if s.person and s.person.name == name then return s.model.anim, s.model.model end end
 end
 check(seatAnim("Dps1") == 68, "winner cheers")
 check(seatAnim("Dps2") == 77, "loser cries")
@@ -559,7 +567,7 @@ check(G.Game.result and G.Game.result.winner == "Dps1" and G.Game.result.loser =
 -- the round carries exactly one loser field, so only one player can ever take the loss.
 check(G.Game.result.loser == "Dps2" and G.Game.result.loser ~= "Kumlust", "the co-low-roller is not booked as a second loser")
 check(type(G.Game.result.loser) == "string", "a round has one loser, not a list")
-for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then end end
+for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Kumlust" then end end
 
 ---------------------------------------------------------------- the window says it in English
 G.UI:Show()
@@ -633,6 +641,13 @@ TradeFrame.shown = false
 fire("TRADE_CLOSED"); fire("TRADE_CLOSED")
 fire("UI_INFO_MESSAGE", 1, "Trade complete.")
 check(G.Ledger.Net("Kumlust") == 0, "debt cleared after the trade")
+-- the person paid runs the addon or not: only when they do not does the payer say it for them
+do
+  local saidD = false
+  for _, m in ipairs(addon) do if m:find("^PAID\tKumlust\tDps1\t40\tD") then saidD = true end end
+  check(saidD == not G.Comm.HasAddon("Dps1"),
+        "the payer announces its own trade (\"D\") exactly when the person paid has no addon")
+end
 check(chat[#chat]:find("square"), "paid message: " .. lastChat())
 -- a requested but not yet accepted trade must never be filled
 G.Ledger.Add("Kumlust", "Dps1", 32)
@@ -715,7 +730,8 @@ SlashCmdList.BISGAMBA("reset")
 SlashCmdList.BISGAMBA("start 100")
 fire("CHAT_MSG_RAID", "1", "Dps2")
 check(#G.Game.order == 2, "two seated while it is open")
-check(not G.UI.joinBtn.off, "and the join button works")
+-- you are seated (the host sits by default): leave is the lit one, join is not (17 Oct 2026)
+check(not G.UI.leaveBtn.off and G.UI.joinBtn.off, "seated: leave works, join is dim")
 SlashCmdList.BISGAMBA("go")
 -- from here nobody gets in or out
 check(G.UI.joinBtn.off, "join is shut once the rolls are called")
@@ -811,7 +827,7 @@ check(G.UI.callBtn.off, "no second countdown")
 _G.__now = 2004
 G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
 local hostSeat
-for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then hostSeat = s_ end end
+for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Kumlust" then hostSeat = s_ end end
 check(hostSeat and strip(hostSeat.roll.text_) == "6", "host portrait shows 6: " .. tostring(hostSeat and strip(hostSeat.roll.text_)))
 _G.__now = 2008
 G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
@@ -836,9 +852,9 @@ check(G.Game.state == "ROLL", "the expiring timer does not re-fire")
 ---------------------------------------------------------------- the host can sit out
 SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100")
 check(G.Game.Seated(), "host is seated by default")
-G.UI.joinBtn.scripts.OnClick()
+G.UI.leaveBtn.scripts.OnClick()
 check(not G.Game.Seated() and G.Game.IsHost() and G.Game.state == "JOIN", "host backed out but still runs the table")
-check(strip(G.UI.joinBtn.text.text_) == "join", "button flipped back to join")
+check(not G.UI.joinBtn.off and G.UI.joinBtn.hot and G.UI.leaveBtn.off, "out: join lights up, leave goes dim")
 fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
 SlashCmdList.BISGAMBA("go")
 check(said[#said]:find("rolls open") and said[#said]:find("HIGH / LOW") and said[#said]:find("/roll 100 now"),
@@ -871,8 +887,8 @@ from("Dps2", "JOIN", "Dps2")
 G.UI.joinBtn.scripts.OnClick()
 check(said[#said] == "RAID: 1", "join types 1: " .. said[#said])
 from("Dps2", "JOIN", "Kumlust")
-check(G.Game.Seated() and G.UI.joinBtn.text.text_ == "leave", "seated -> button says leave")
-G.UI.joinBtn.scripts.OnClick()
+check(G.Game.Seated() and G.UI.leaveBtn.hot and G.UI.joinBtn.off, "seated: leave lights up, join goes dim")
+G.UI.leaveBtn.scripts.OnClick()
 check(said[#said] == "RAID: -1", "leave types -1")
 from("Dps2", "LEAVE", "Kumlust"); from("Dps2", "JOIN", "Kumlust")
 -- a stranger's OPEN doesn't hijack
@@ -908,6 +924,71 @@ local function pairAmt(a,b) for _, d in ipairs(BiSGambaDB.debts) do if d.from==a
 check(pairAmt("Kumsecration","Dps2") == 40, "and neither can a debtor for someone else")
 from("Dps2", "PAID", "Kumsecration", "Dps2", "40")    -- the creditor: honoured
 check(pairAmt("Kumsecration","Dps2") == 0, "the creditor's PAID clears it")
+
+---------------------------------------------------------------- debts nobody's addon can see paid
+-- Arn, 16 Oct 2026: "showed debts not paid on gambles because the people did not have the addon
+-- installed so i had to click the buttons as paid"
+do
+  BiSGambaDB.users = BiSGambaDB.users or {}
+  BiSGambaDB.users.Kumsecration = os.time()            -- seen with the addon
+  -- 1. the debtor's own trade counts when the person owed has no addon ("D")
+  G.Ledger.Add("Dps2", "Pugone", 30)
+  from("Dps2", "PAID", "Dps2", "Pugone", "30", "D")
+  check(pairAmt("Dps2", "Pugone") == 0, "a debtor's completed trade clears it when the person owed has no addon")
+  G.Ledger.Add("Dps2", "Kumsecration", 30)
+  from("Dps2", "PAID", "Dps2", "Kumsecration", "30", "D")
+  check(pairAmt("Dps2", "Kumsecration") == 30, "but not when the person owed runs the addon - they say it themselves")
+  from("Pugone", "PAID", "Dps2", "Kumsecration", "30", "D")
+  check(pairAmt("Dps2", "Kumsecration") == 30, "and nobody but the debtor can send the trade's word")
+  G.Ledger.Clear("Dps2", "Kumsecration")
+
+  -- 2. on their honour: neither runs the addon. Shown so, and gone after the night
+  G.Ledger.Add("Pugone", "Pugtwo", 20)
+  local d
+  for _, x in ipairs(BiSGambaDB.debts) do if x.from == "Pugone" and x.to == "Pugtwo" then d = x end end
+  check(G.Ledger.Honour(d), "two people without the addon: on their honour")
+  G.Ledger.Add("Pugone", "Kumsecration", 10)
+  local e
+  for _, x in ipairs(BiSGambaDB.debts) do if x.from == "Pugone" and x.to == "Kumsecration" then e = x end end
+  check(not G.Ledger.Honour(e), "one of them runs it: not honour - it can still be seen paid")
+  check(G.Ledger.Expire() == 0, "nothing expires the same night")
+  d.at = d.at - G.Ledger.HONOUR_TTL - 1
+  e.at = e.at - G.Ledger.HONOUR_TTL - 1
+  check(G.Ledger.Expire() == 1 and pairAmt("Pugone", "Pugtwo") == 0, "the next day the honour debt has left the book")
+  check(pairAmt("Pugone", "Kumsecration") == 10, "a debt someone's addon can see is kept")
+  G.Ledger.Clear("Pugone", "Kumsecration")
+
+  -- 3. yours first; everybody else's folded into one line
+  G.Ledger.Add("Kumlust", "Dps1", 15)
+  G.Ledger.Add("Pugone", "Pugtwo", 20)
+  G.Ledger.Add("Dps2", "Pugthree", 25)
+  G.UI:Show(); G.UI.showOthers = nil
+  if not G.UI.debtPanel:IsShown() then G.UI:ToggleDebts() end
+  G.UI:Refresh()
+  local lines = {}
+  for _, r in ipairs(G.UI.rows) do if r.shown and r.text.text_ then lines[#lines + 1] = strip(r.text.text_) end end
+  check(lines[1] and lines[1]:find("you", 1, true), "your own debts first: " .. tostring(lines[1]))
+  local mineAt, foldAt
+  for i, t in ipairs(lines) do
+    if t:find("^you owe Dps1") then mineAt = i end
+    if t:find("between others") then foldAt = i end
+  end
+  check(mineAt and foldAt and mineAt < foldAt, "all of yours above everybody else's")
+  local fold
+  for i, t in ipairs(lines) do if t:find("debts? between others") then fold = i end end
+  check(fold and lines[fold]:find("show"), "the rest folded into one line: " .. tostring(fold and lines[fold]))
+  check(#lines == fold, "and nothing of theirs below it until it is opened")
+  G.UI.rows[fold].scripts.OnClick()
+  lines = {}
+  for _, r in ipairs(G.UI.rows) do if r.shown and r.text.text_ then lines[#lines + 1] = strip(r.text.text_) end end
+  local hon
+  for _, t in ipairs(lines) do if t:find("Pugone owes Pugtwo") then hon = t end end
+  check(hon and hon:find("on their honour"), "opened: theirs are listed, the unseeable one on their honour: " .. tostring(hon))
+  fitsIn(BiSGambaFrame, "the table with the debts open and others shown")
+  G.UI.showOthers = nil
+  G.UI:ToggleDebts()
+  G.Ledger.Clear("Kumlust", "Dps1"); G.Ledger.Clear("Pugone", "Pugtwo"); G.Ledger.Clear("Dps2", "Pugthree")
+end
 from("Dps2", "CLOSE")
 check(G.Game.state == "DONE", "CLOSE after DONE leaves the result up")
 -- HI from a client while hosting -> replay
@@ -939,8 +1020,11 @@ SlashCmdList.BISGAMBA("popup"); check(BiSGambaDB.autoOpen == true, "popup toggle
 from("Dps2", "CLOSE"); G.UI:Show()
 SlashCmdList.BISGAMBA("start 60"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); SlashCmdList.BISGAMBA("go"); fire("CHAT_MSG_SYSTEM", "Kumlust rolls 30 (1-60)")
 SlashCmdList.BISGAMBA("view 2d"); G.UI:Refresh()
-local s2 = nil; for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then s2 = s_ end end
-check(s2 and s2.portrait.shown and not s2.model.shown and s2.portrait.portrait == "player", "2d uses the live portrait")
+local s2 = nil; for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Kumlust" then s2 = s_ end end
+-- you are always the big 3D model (Arn, 17 Oct: "us on the left always big 3d model"); the others go 2D
+check(s2 and s2 == G.UI.mySeat and s2.model.shown and not s2.portrait.shown, "2d view: you stay a 3D model, big, on the left")
+local o2 = nil; for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumsecration" then o2 = s_ end end
+check(o2 and o2.portrait.shown and not o2.model.shown, "and the others turn to portraits")
 SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- no whisper between addon users
@@ -1071,7 +1155,7 @@ from("Dps2", "OPEN", "80")
 from("Dps2", "JOIN", "Dps2"); from("Dps2", "JOIN", "Kumlust")
 check(not G.Game.IsHost() and G.Game.host == "Dps2", "they host")
 local hostSeat
-for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Dps2" then hostSeat = s_ end end
+for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Dps2" then hostSeat = s_ end end
 check(hostSeat and hostSeat.crown.shown, "and wear the crown")
 -- a running table can't be stolen
 SlashCmdList.BISGAMBA("start 100")
@@ -1085,7 +1169,7 @@ SlashCmdList.BISGAMBA("start 100")
 check(G.Game.IsHost() and G.Game.host == "Kumlust" and G.Game.state == "JOIN", "we host the next one")
 check(not G.UI.startBtn.off and not G.UI.callBtn.off, "and the controls come alive")
 G.UI:Refresh()
-for _, s_ in ipairs(G.UI.seats) do
+for _, s_ in ipairs(allSeats()) do
   if s_.person and s_.person.name == "Kumlust" then check(s_.crown.shown, "the crown moved to us") end
   if s_.person and s_.person.name == "Dps2" then check(not s_.crown.shown, "and left them") end
 end
@@ -1263,7 +1347,7 @@ check(strip(G.UI.boardRows[1].net.text_) == "+500g", "and their net: " .. strip(
 check(strip(G.UI.boardRows[1].name.text_):find("host"), "the host is marked")
 fitsIn(BiSGambaFrame, "the table with the leaderboard open")
 -- the effects
-local function seatOf(name) for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == name then return s_ end end end
+local function seatOf(name) for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == name then return s_ end end end
 check(seatOf("Kumlust").aura.shown, "biggest winner gets the gold aura")
 -- the 2D tile is opaque, so the winner needs a glow in front of it too
 SlashCmdList.BISGAMBA("view 2d"); G.UI:Refresh()
@@ -1873,7 +1957,23 @@ G.UI:Refresh(); fitsIn(BiSGambaFrame, "the table, empty")
 SlashCmdList.BISGAMBA("start 100")
 fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); fire("CHAT_MSG_RAID", "1", "Dps1")
 G.UI:Layout()
-check(G.UI.frame.h > emptyH, "the table grows as people join (empty " .. tostring(emptyH) .. " -> seated " .. tostring(G.UI.frame.h) .. ")")
+-- 1.43:1 (Arn, 17 Oct: "the new aspect ratio"): a few seats fit the shape it already has; it grows
+-- only when they would not, and keeps the shape when it does
+check(math.abs(G.UI.frame.w / G.UI.frame.h - 1.43) < 0.01, "seated: the window is 1.43:1 (" .. G.UI.frame.w .. "x" .. G.UI.frame.h .. ")")
+check(G.UI.frame.h >= emptyH, "and never smaller than the empty table")
+G.UI:Refresh(); fitsIn(BiSGambaFrame, "the table, seated, with your buttons in a column")
+-- YOU, BIG, ON THE LEFT (Arn, 17 Oct: "us on the left always big 3d model them on the right smaller")
+check(G.UI.mySeat and G.UI.mySeat.big and G.UI.mySeat.person and G.UI.mySeat.person.name == "Kumlust",
+      "you have the big seat on the left")
+check(G.UI.mySeat.aw > 2 * 30, "a big model, not a seat-sized one: " .. tostring(G.UI.mySeat.aw))
+local mine = 0
+for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then mine = mine + 1 end end
+check(mine == 0, "and you are not in the grid twice")
+local others = 0
+for _, s_ in ipairs(G.UI.seats) do if s_.person then others = others + 1 end end
+check(others == 3, "the other three sit in the grid: " .. others)
+SlashCmdList.BISGAMBA("reset"); G.UI:Layout()
+check(G.UI.mySeat.person and G.UI.mySeat.person.name == "Kumlust", "no table at all: you still stand there")
 SlashCmdList.BISGAMBA("reset"); G.UI:Layout()
 check(math.abs(G.UI.frame.h - emptyH) < 1, "and shrinks back to the short empty strip when it clears")
 
@@ -1957,7 +2057,7 @@ SlashCmdList.BISGAMBA("reset")
 SlashCmdList.BISGAMBA("reset"); BiSGambaDB.rounds = {}; BiSGambaDB.boardScope = "all"
 SlashCmdList.BISGAMBA("start 100"); G.UI:Show()
 fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); fire("CHAT_MSG_RAID", "1", "Dps4")
-local function bseat(nm) for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == nm then return s end end end
+local function bseat(nm) for _, s in ipairs(allSeats()) do if s.person and s.person.name == nm then return s end end end
 -- Gnomer: two wins trailing; Kum: two losses trailing; Winter: a lone win (run of 1)
 rnd("b1", 100, "Dps2", "Kumsecration"); rnd("b2", 200, "Dps2", "Kumsecration")
 rnd("b3", 300, "Dps4", "Dps5")
@@ -1973,7 +2073,7 @@ SlashCmdList.BISGAMBA("reset"); BiSGambaDB.rounds = {}
 SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100"); G.UI:Show()
 fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
 G.UI:Refresh()
-local function seatOf(nm) for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == nm then return s end end end
+local function seatOf(nm) for _, s in ipairs(allSeats()) do if s.person and s.person.name == nm then return s end end end
 local A = G.ANIM
 -- a rolled 1: the roller cries, the rest of the table laughs at them
 G.UI:OnRoll("Dps2", 1)
@@ -2286,6 +2386,285 @@ do
   local bad = stale("BiSGamba.lua", true)
   for _, f in ipairs(stale("README.md", false)) do bad[#bad + 1] = f end
   check(#bad == 0, "no user-facing text says /gamba as the command to type: " .. table.concat(bad, ", "))
+end
+
+---------------------------------------------------------------- the team game (17 Oct 2026)
+-- Arn: "open a team game, people join and only works if even number of players play, the game auto
+-- randomizes them into teams, if wager 100 it tell them what each team member has to roll ... losing
+-- team pays winning team"; "each loser pays one winner"; "both teams roll again"; the audible:
+-- "round up or down on what ever the wager is divisible evenly ... what ever is closer"
+do
+  -- "LAST CALL 0" ON AN IDLE TABLE (Arn's screenshot, 17 Oct): a table ended mid-countdown kept it
+  SlashCmdList.BISGAMBA("reset")
+  SlashCmdList.BISGAMBA("start 100")
+  G.UI.callBtn.scripts.OnClick()
+  check(G.Game.Countdown() ~= nil, "a last call is running")
+  SlashCmdList.BISGAMBA("end")
+  G.UI:Refresh()
+  check(G.Game.state == "IDLE" and G.Game.Countdown() == nil, "ended mid-countdown: no countdown left over")
+  check(strip(G.UI.callBtn.text.text_) == "last call", "the button says last call, not \"last call 0\"")
+  runTimers()
+
+  -- the audible's arithmetic, against his own examples
+  check(G.Game.Split(100, 5) == 20, "100, 5 a side: everyone rolls 20")
+  check(G.Game.Split(100, 3) == 33, "100, 3 a side: 99, not 102 - the closer")
+  check(G.Game.Split(10, 3) == 3, "10, 3 a side: 9, not 12")
+  check(G.Game.Split(101, 2) == 51, "101, 2 a side: 100 and 102 are as close - up, 102")
+  check(G.Game.Split(104, 3) == 35, "104, 3 a side: 105 is closer than 102")
+
+  inRaid = true
+  SlashCmdList.BISGAMBA("reset")
+  BiSGambaDB.debts = {}
+  G.UI:Show()
+  local keepDiff = BiSGambaDB.payDiff
+  BiSGambaDB.payDiff = true
+  local before = #said
+  SlashCmdList.BISGAMBA("team 101")
+  check(G.Game.team and G.Game.state == "JOIN" and G.Game.max == 101, "a team table opens at its wager")
+  check(table.concat(said, "\n", before + 1):find("TEAM ROLL", 1, true), "and says so in chat")
+  fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
+  check(#G.Game.order == 3, "three in")
+  -- A ONE-SECOND BAR WHEN SOMEBODY SITS DOWN (Arn: "a new person joins, a small progress bar fast
+  -- like 1 second, determining team etc.")
+  check(G.UI.prog.shown and G.UI.progFor == 1, "a join runs a one-second bar")
+  check(strip(G.UI.status.text_):find("Kumsecration joins · 3 in · needs an even number", 1, true),
+        "and says whether the sides can be dealt: " .. strip(G.UI.status.text_))
+  _G.__now = (_G.__now or 0) + 2
+  G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
+  check(not G.UI.prog.shown and G.UI.progWhat == nil, "a second later the bar is gone")
+  SlashCmdList.BISGAMBA("go")
+  check(G.Game.state == "JOIN", "three is odd: the rolls are not called")
+  fire("CHAT_MSG_RAID", "1", "Dps1")
+  before = #said
+  SlashCmdList.BISGAMBA("go")
+  check(G.Game.state == "ROLL", "four: the rolls are called")
+  check(G.Game.max == 51 and G.Game.teamWager == 102, "101 two ways: the audible makes it 102, everyone rolls 51")
+  local heard = table.concat(said, "\n", before + 1)
+  check(heard:find("audible", 1, true) and heard:find("team A:", 1, true) and heard:find("team B:", 1, true),
+        "the audible and both sides are said in chat")
+  local A, B = G.Game.teamList.A, G.Game.teamList.B
+  check(#A == 2 and #B == 2, "two a side")
+  check(G.UI.prog.shown and strip(G.UI.status.text_):find("dealing the sides", 1, true),
+        "a bar while the sides are dealt: " .. strip(G.UI.status.text_))
+  local seen = {}
+  for _, n in ipairs(A) do seen[n] = true end
+  for _, n in ipairs(B) do seen[n] = true end
+  check(seen.Kumlust and seen.Dps2 and seen.Kumsecration and seen.Dps1, "everyone dealt, nobody twice")
+  runTimers(1)
+  local tm = 0
+  for _, m in ipairs(addon) do if m:find("^TM\t") then tm = tm + 1 end end
+  check(tm == 4, "clients are told each side: " .. tm)
+
+  local function roll(name, n) fire("CHAT_MSG_SYSTEM", ("%s rolls %d (1-%d)"):format(name, n, G.Game.max)) end
+  roll(A[1], 30); roll(A[2], 20); roll(B[1], 25); roll(B[2], 25)
+  runTimers()
+  check(G.Game.state == "ROLL" and G.Game.players[A[1]].roll == nil, "50 all: both teams roll again")
+  roll(A[1], 40); roll(A[2], 30); roll(B[1], 10); roll(B[2], 20)
+  runTimers()
+  check(G.Game.state == "DONE" and G.Game.winTeam == "A", "70 over 30: team A wins")
+  local function owes(a, b) for _, d in ipairs(BiSGambaDB.debts) do if d.from == a and d.to == b then return d.amount end end return 0 end
+  check(owes(B[1], A[1]) == 20 and owes(B[2], A[2]) == 20, "each loser pays one winner their share of the gap: 40 / 2 = 20")
+  check(owes(B[1], A[2]) == 0 and owes(B[2], A[1]) == 0, "one winner each, never two")
+
+  -- the view: your side on the left, the same size; theirs on the right; totals over them
+  G.UI:Refresh()
+  check(not G.UI.mySeat.cell.shown, "the big seat steps aside")
+  check(strip(G.UI.teamHeads.L.text_):find("your team", 1, true), "your side on the left: " .. strip(G.UI.teamHeads.L.text_))
+  local mine = G.Game.teamOf.Kumlust
+  check(strip(G.UI.teamHeads.L.text_):find(tostring(G.Game.TeamSum(mine)), 1, true), "with its total")
+  check(math.abs(G.UI.frame.w / G.UI.frame.h - 1.43) < 0.01, "still 1.43:1")
+  fitsIn(BiSGambaFrame, "the team table")
+
+  -- a client believes a team result only if it follows from the rolls it saw
+  BiSGambaDB.debts = {}
+  SlashCmdList.BISGAMBA("reset")
+  from("Dps2", "OPEN", "100", "T")
+  check(G.Game.team and G.Game.host == "Dps2", "a client follows a team table")
+  for _, n in ipairs({ "Dps2", "Kumlust", "Kumsecration", "Dps1" }) do from("Dps2", "JOIN", n) end
+  from("Dps2", "TEAMS", "50", "100")
+  from("Dps2", "TM", "Dps2", "A"); from("Dps2", "TM", "Kumlust", "A")
+  from("Dps2", "TM", "Kumsecration", "B"); from("Dps2", "TM", "Dps1", "B")
+  from("Dps2", "GO")
+  from("Dps2", "ROLL", "Dps2", "40"); from("Dps2", "ROLL", "Kumlust", "30")
+  from("Dps2", "ROLL", "Kumsecration", "10"); from("Dps2", "ROLL", "Dps1", "20")
+  check(G.Game.max == 50 and G.Game.teamOf.Kumlust == "A", "with the sides the host dealt")
+  from("Dps2", "TDONE", "Dps2", "Dps1", "999", "70", "30", "Dps2:t1", "-")
+  check(owes("Dps1", "Dps2") == 0, "a forged amount is not believed")
+  from("Dps2", "TDONE", "Dps2", "Dps1", "20", "71", "30", "Dps2:t1", "-")
+  check(owes("Dps1", "Dps2") == 0, "nor a total the rolls do not add up to")
+  from("Dps2", "TDONE", "Dps2", "Dps1", "20", "70", "30", "Dps2:t1", "-")
+  from("Dps2", "TDONE", "Kumlust", "Kumsecration", "20", "70", "30", "Dps2:t2", "-")
+  check(owes("Dps1", "Dps2") == 20 and owes("Kumsecration", "Kumlust") == 20, "the true pairs are booked")
+  SlashCmdList.BISGAMBA("reset")
+  BiSGambaDB.payDiff = keepDiff
+  BiSGambaDB.debts = {}
+end
+
+---------------------------------------------------------------- deathroll (Deathroll.lua)
+-- Arn, 16 Oct 2026: "maybe we do this for our bis gamba so people can deathroll each other" -
+-- "maybe its only challenging people in same raid or party or guild"
+do
+  local D = G.Deathroll
+  check(D ~= nil, "Deathroll.lua loaded")
+  local realNum, realInfo, realIn = GetNumGuildMembers, GetGuildRosterInfo, IsInGuild
+  local ROSTER = { "Kumlust-Dreamscythe", "Frank G-Dreamscythe", "Dps2-Dreamscythe", "Busy Bee-Dreamscythe" }
+  GetNumGuildMembers = function() return #ROSTER end
+  GetGuildRosterInfo = function(i) return ROSTER[i] end
+  IsInGuild = function() return true end
+  local function last() runTimers(1) return addon[#addon] or "" end
+  local function mine(prefix) runTimers(1) local n = 0 for _, m in ipairs(addon) do if m:find("^" .. prefix) then n = n + 1 end end return n end
+  BiSGambaDB.debts = {}
+
+  -- who
+  local ok, why = D.Challenge("Stranger", 1000, 50)
+  check(not ok and why:find("not in your group or guild"), "a stranger cannot be challenged: " .. tostring(why))
+  ok, why = D.Challenge("Frank", 1000, 50)
+  check(not ok, "\"Frank\" is not \"Frank G\": the whole name or nothing")
+  ok = D.Challenge("Kumlust", 1000, 50)
+  check(not ok, "not yourself")
+  ok, why = D.Challenge("Frank G", 1, 50)
+  check(not ok, "a start of 1 is not a game")
+
+  -- a guildmate outside the group, whole name with a space
+  addon = {}
+  ok = D.Challenge("  Frank G ", 1000, 50)
+  check(ok and D.game.state == "ASKED" and D.game.foe == "Frank G", "a guildmate outside the group can be challenged")
+  check(last():find("^DRASK\tKumlust:dr%d+\t1000\t50$"), "the challenge goes out: " .. last())
+  local id = D.game.id
+  check(not D.Challenge("Dps2", 100, 1), "one deathroll at a time")
+  from("Frank G", "DRYES", id)
+  check(D.game.state == "PLAY" and D.game.turn == "Kumlust", "accepted: the challenger rolls first")
+  G.UI:Show(); D.Show(); D.Refresh()
+  check(D.frame:IsShown(), "the window is up")
+  check(math.abs(D.frame.w / D.frame.h - 1.43) < 0.01, "1.43:1, the BiS shape")
+  fitsIn(BiSGambaDeathroll, "the deathroll window, rolling")
+  check(strip(D.frame.go.text.text_) == "/roll 1000", "the button says the exact roll: " .. strip(D.frame.go.text.text_))
+  local before = #rolled
+  D.frame.go.scripts.OnClick()
+  check(#rolled == before + 1 and rolled[#rolled][1] == 1 and rolled[#rolled][2] == 1000, "roll: /roll 1-1000")
+  D.frame.go.scripts.OnClick()
+  check(#rolled == before + 1, "a second press before it lands rolls nothing")
+  fire("CHAT_MSG_SYSTEM", "Kumlust rolls 300 (1-1000)")
+  check(D.game.turn == "Frank G" and D.game.max == 300, "300: their turn, 1-300")
+  check(last() == "DRROLL\t" .. id .. "\t300\t1000", "and they are told - outside the group they never see it: " .. last())
+  from("Frank G", "DRROLL", id, "120", "999")
+  check(D.game.max == 300, "a roll against the wrong number is not counted")
+  from("Dps2", "DRROLL", id, "1", "300")
+  check(D.game.turn == "Frank G", "and nobody else can roll for them")
+  from("Frank G", "DRROLL", id, "120", "300")
+  check(D.game.turn == "Kumlust" and D.game.max == 120, "their 120: back to us, 1-120")
+  D.Refresh()
+  check(strip(D.frame.go.text.text_) == "/roll 120", "they rolled 120: the button is /roll 120")
+  fire("CHAT_MSG_SYSTEM", "Kumlust rolls 1 (1-120)")
+  check(D.game.state == "DONE" and D.game.loser == "Kumlust" and D.game.winner == "Frank G", "a 1 loses")
+  local owed
+  for _, d in ipairs(BiSGambaDB.debts) do if d.from == "Kumlust" and d.to == "Frank G" then owed = d.amount end end
+  check(owed == 50, "and the wager is in the debts book: " .. tostring(owed))
+  check(BiSGambaDB.rounds[id] and BiSGambaDB.rounds[id].mode == "dr", "and on the leaderboard as a deathroll")
+  D.Refresh()
+  check(strip(D.frame.line1.text_) == "you rolled 1" and strip(D.frame.line2.text_) == "you owe Frank G 50g",
+        "the window says so, on two short lines: " .. strip(D.frame.line2.text_))
+  -- the duel (Arn, 17 Oct: "we are standing on the left them on the right, and rolls in the middle")
+  check(D.frame.me.who == "Kumlust" and D.frame.them.who == "Frank G", "you on the left, them on the right")
+  check(D.frame.me.model == "unit:player", "you in 3D: " .. tostring(D.frame.me.model))
+  check(D.frame.them.model == "display:" .. G.Kit.WISP, "a guildmate outside the group: a wisp, never nothing")
+  check(D.frame.me.anim == G.ANIM.cry and D.frame.them.anim == G.ANIM.cheer,
+        "you rolled the 1: you cry, they cheer")
+  local log = strip(D.frame.log.text_)
+  check(log:find("^you 1\n") and log:find("Frank G 120", 1, true) and log:find("you 300", 1, true),
+        "the rolls down the middle, newest first: " .. log:gsub("\n", " / "))
+  fitsIn(BiSGambaDeathroll, "the deathroll window, over")
+  D.frame.alt.scripts.OnClick()
+  check(D.game == nil, "done clears it")
+
+  -- challenged, by someone in the group, for fun
+  addon = {}
+  from("Dps2", "DRASK", "Dps2:dr1", "500", "0")
+  check(D.game and D.game.state == "INVITED" and D.frame:IsShown(), "a challenge from the group: the window asks")
+  fitsIn(BiSGambaDeathroll, "the deathroll window, asking")
+  from("Stranger", "DRASK", "Stranger:dr1", "500", "0")
+  check(D.game.foe == "Dps2" and mine("DRNO") == 0, "a stranger's challenge is not even answered")
+  from("Busy Bee", "DRASK", "Busy Bee:dr1", "500", "0")
+  check(D.game.foe == "Dps2" and last():find("^DRNO\tBusy Bee:dr1\tbusy"), "a second one while busy: \"busy\"")
+  D.frame.go.scripts.OnClick()
+  check(last() == "DRYES\tDps2:dr1" and D.game.turn == "Dps2", "accept: they roll first")
+  fire("CHAT_MSG_SYSTEM", "Dps2 rolls 1 (1-500)")
+  check(D.game.state == "DONE" and D.game.winner == "Kumlust", "in the group, their roll is read straight from chat")
+  from("Dps2", "DRROLL", "Dps2:dr1", "1", "500")
+  check(D.game.state == "DONE" and #D.game.rolls == 1, "and their own word for it does not count it twice")
+  local fun = false
+  for _, d in ipairs(BiSGambaDB.debts) do if d.from == "Dps2" and d.to == "Kumlust" then fun = true end end
+  check(not fun and not BiSGambaDB.rounds["Dps2:dr1"], "for fun: no debt, nothing on the board")
+  D.game = nil
+
+  -- unanswered
+  ok = D.Challenge("Frank G", 1000, 5)
+  runTimers(D.ANSWER + 1)
+  check(D.game == nil, "no answer in a minute: it is dropped (they may not run BiS Gamba)")
+
+  -- before a game: the people in the group, a list to pick from; no number filled in for you
+  local wasRaid = inRaid
+  inRaid = true                                       -- an earlier section left us in no group at all
+  D.game, D.pick = nil, nil
+  D.Show()
+  check(D.frame.list:IsShown() and not D.frame.them:IsShown(), "nobody picked: the right side is the list")
+  local names = {}
+  for _, r in ipairs(D.frame.rows) do if r:IsShown() and r.person then names[#names + 1] = r.person.name end end
+  check(#names >= 2 and not table.concat(names, ","):find("Kumlust"), "your party or raid, without you: " .. table.concat(names, ","))
+  check(D.frame.start == nil, "no \"start at\" box (Arn: \"the start at is not needed\")")
+  check((D.frame.bet:GetText() or "") == "", "and no number filled in for you (Arn: \"no prefilled number\")")
+  check(D.frame.go.off, "challenge waits for someone picked")
+  fitsIn(BiSGambaDeathroll, "the deathroll window, picking")
+  local first
+  for _, r in ipairs(D.frame.rows) do if r:IsShown() and r.person and r.person.online then first = r break end end
+  first.scripts.OnClick(first)
+  check(D.pick == first.person.name and D.frame.them:IsShown() and not D.frame.list:IsShown(),
+        "clicked: they stand on the right")
+  addon = {}
+  D.frame.go.scripts.OnClick()
+  check(D.game == nil, "no gold typed: nothing is sent")
+  D.frame.bet:SetText("500")
+  D.frame.go.scripts.OnClick()
+  check(D.game and D.game.start == 500 and D.game.wager == 500, "500 gold: the rolls start at 500, for 500g")
+  D.TakeBack()
+  D.frame.fun.scripts.OnClick()
+  D.frame.go.scripts.OnClick()
+  check(D.game and D.game.start == 500 and D.game.wager == 0, "\"for fun\": from 500, nobody owes anybody")
+  D.TakeBack()
+  D.frame.fun.scripts.OnClick()
+  D.frame.bet:SetText("")
+  inRaid = wasRaid
+
+  -- BESIDE THE TABLE, NOT UNDER IT (Arn's screenshot, 17 Oct: the deathroll list was covered by the
+  -- table). The table on screen with room to its left: deathroll opens there, in front.
+  G.UI:Show()
+  BiSGambaFrame.GetLeft = function() return 700 end
+  BiSGambaFrame.GetRight = function() return 1200 end
+  local raised = false
+  D.frame.Raise = function() raised = true end
+  D.frame:Hide(); D.Show()
+  local at = D.frame.points[#D.frame.points]
+  check(at and at.point == "TOPRIGHT" and at.rel == BiSGambaFrame and at.relPoint == "TOPLEFT",
+        "deathroll opens to the left of the table, never on it")
+  check(raised, "and in front")
+  BiSGambaFrame.GetLeft = function() return 20 end
+  BiSGambaFrame.GetRight = function() return 520 end
+  local realW = UIParent.GetWidth
+  UIParent.GetWidth = function() return 1920 end           -- the mock's UIParent is 100 px: a screen is not
+  D.frame:Hide(); D.Show()
+  at = D.frame.points[#D.frame.points]
+  check(at and at.point == "TOPLEFT" and at.relPoint == "TOPRIGHT", "no room on the left: to its right")
+  UIParent.GetWidth = realW
+  BiSGambaFrame.GetLeft, BiSGambaFrame.GetRight, D.frame.Raise = nil, nil, nil
+
+  -- the slash command and the button
+  D.pick = nil
+  SlashCmdList.BISGAMBA("dr Frank G")
+  check(D.frame:IsShown() and D.pick == "Frank G", "/bisgamba dr <name> opens it, them on the right")
+  check(G.UI.drBtn ~= nil, "a deathroll button on the table")
+  fitsIn(BiSGambaFrame, "the table with the deathroll button")
+  D.frame:Hide()
+  GetNumGuildMembers, GetGuildRosterInfo, IsInGuild = realNum, realInfo, realIn
 end
 
 print(("%d checks, %d failed"):format(pass + fail, fail))
