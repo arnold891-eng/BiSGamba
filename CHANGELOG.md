@@ -1,5 +1,10 @@
 # BiS Gamba - Changelog
 
+## 1.6.0
+
+- **BiSGambaAPI** - other BiS addons can read the leaderboard, standings, debts and recent rounds, and open the window. It's read-only: nothing else can move gold, settle a debt or place a bet.
+- The addon list shows **BiS>Gamba**, like its category.
+
 ## 1.5.0
 
 - **Your guild can see you on BiS Tools' map.** Every BiS addon now shares your spot with guildmates while you move - every 15 seconds in a small guild, slower as it grows, never from inside an instance. On by default; `/biscomm share off` (or `on`) switches it for every BiS addon at once.

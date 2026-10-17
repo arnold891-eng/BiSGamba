@@ -1,9 +1,9 @@
 ## Interface: 20506, 16001
-## Title: BiS Gamba
+## Title: |cffb980ffBiS>|rGamba
 ## Category: |cffb980ffBiS>|rAddons
 ## Notes: Lightweight high/low gold gambling for raid nights - shared table, debt ledger, one-click payouts, leaderboard.
 ## Author: Kumlust
-## Version: 1.5.0
+## Version: 1.6.0
 ## SavedVariables: BiSGambaDB
 ## OptionalDeps: BiSTheme
 ## X-Curse-Project-ID: 1682133
@@ -16,3 +16,4 @@ Libs\BiSTheme\Options.lua
 Libs\LibBiSComm-1.0\LibBiSComm-1.0.lua
 Libs\RezComm-1.0\RezComm-1.0.lua
 BiSGamba.lua
+API.lua
