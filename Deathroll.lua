@@ -335,7 +335,16 @@ function D.Build()
 
   f.title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   f.title:SetPoint("TOPLEFT", 12, -10)
-  f.title:SetText(T.text("accent", "BiS>") .. T.text("ink", " Deathroll"))
+  -- THE TABLE'S OWN HEADER (Arn, 17 Oct: "make the deathroll and gamba window similar style"): the
+  -- live BiS> prompt, as on the Gamba table; plain words where the console is not loaded
+  if T.Console then
+    f.con = T.Console(f.title, { width = 200 })
+    f.con:Set("name", "Deathroll", "accent")
+    -- the cursor blinks while the window is open, and only then (OnUpdate runs only while shown)
+    f:SetScript("OnUpdate", function() if f.con then f.con:Paint() end end)
+  else
+    f.title:SetText(T.text("accent", "BiS>") .. T.text("ink", " Deathroll"))
+  end
   local close = K.SmallButton(f, "x")
   close:SetPoint("TOPRIGHT", -8, -8)
   close:SetScript("OnClick", function() f:Hide() end)

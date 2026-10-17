@@ -2180,6 +2180,8 @@ local CELL_H = ROLL_H + ART_H + 6 + TEXT_H
 local COLS = 13          -- up to 13 to a row now the cells are smaller
 local MIN_W = math.max(5 * CELL_W + 2 * PAD, 486)   -- the control row's floor, not the grid's
 local MAX_ROWS = 3       -- 39 seats, thirteen to a row - a full 25-man is two rows
+local ACT_W = 84         -- your buttons' column on the left: join, roll, leave, pay (17 Oct 2026)
+local RATIO = 1.43       -- the BiS window shape: grow to fit, keep the shape (Arn, 14 Oct)
 
 -- Header prompt budget (bis-theme header law, landmine #9). The prompt+words sit
 -- at x=12; the header button strip is x(22) options(50) board(74) sync(38)
@@ -2758,12 +2760,27 @@ function UI:Build()
   stop:SetScript("OnClick", function() if not stop.off then Game.End() end end)
   self.endBtn = stop
 
-  -- join / leave: everybody has it, in the same place; greyed when not usable
-  local join = SmallButton(f, "join", 50)
-  join:SetPoint("LEFT", stop, "RIGHT", 12, 0)
-  join.tip = "Types 1 in raid chat (or -1 to leave)"
-  join:SetScript("OnClick", function() if join.off then return end; Game.JoinMe() end)
-  self.joinBtn = join
+  -- YOUR BUTTONS, A COLUMN ON THE LEFT, IN THE ORDER A ROUND GOES (Arn, 17 Oct 2026: "the roll button
+  -- on the left in the right order: join roll leave pay ... first if a table is opened join lights up,
+  -- once joined leave lights up, once the game starts roll lights up, lose pay lights up"). The table's
+  -- own controls (the range, start, last call, end) stay on top. Only the next thing to press is lit;
+  -- the rest are there, dim, and never move.
+  local function Act(text, tip, fn)
+    local b = SmallButton(f, text, ACT_W - 8)
+    b:SetSize(ACT_W - 8, 24)
+    b.tip = tip
+    b:SetScript("OnClick", function() box:ClearFocus(); if b.off then return end; fn() end)
+    return b
+  end
+  local join = Act("join", "Types 1 in raid chat: you're in this round", function() Game.JoinMe() end)
+  join:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, -HEAD_H)
+  local roll = Act("roll", "Roll the right range", function() Game.RollMe() end)
+  roll:SetPoint("TOP", join, "BOTTOM", 0, -4)
+  local leave = Act("leave", "Types -1 in raid chat: out of this round", function() Game.JoinMe() end)
+  leave:SetPoint("TOP", roll, "BOTTOM", 0, -4)
+  local pay = Act("pay", "Open a trade with the next person you owe and put the gold in", function() Trade.Pay() end)
+  pay:SetPoint("TOP", leave, "BOTTOM", 0, -4)
+  self.joinBtn, self.rollBtn, self.leaveBtn, self.payBtn = join, roll, leave, pay
 
   -- open this window by itself when a host starts a table?
   local footLine = f:CreateTexture(nil, "ARTWORK")
@@ -2828,19 +2845,6 @@ function UI:Build()
   never:SetPoint("RIGHT", snd.label, "LEFT", -14, 0)
   self.neverOpen = never
 
-  -- shared: roll + pay
-  local roll = SmallButton(f, "roll", 44)
-  roll:SetPoint("LEFT", join, "RIGHT", 4, 0)
-  roll.tip = "Roll the right range"
-  roll:SetScript("OnClick", function() box:ClearFocus(); if roll.off then return end; Game.RollMe() end)
-  self.rollBtn = roll
-
-  local pay = SmallButton(f, "pay", 40)
-  pay:SetPoint("LEFT", roll, "RIGHT", 12, 0)
-  pay.tip = "Open a trade with the next person you owe and put the gold in"
-  pay:SetScript("OnClick", function() Trade.Pay() end)
-  self.payBtn = pay
-
   local status = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   status:SetPoint("TOPLEFT", 12, -60)
   status:SetPoint("RIGHT", f, "RIGHT", -10, 0)
@@ -2849,7 +2853,7 @@ function UI:Build()
 
   -- the seats
   local scene = CreateFrame("Frame", nil, f)
-  scene:SetPoint("TOPLEFT", PAD, -HEAD_H)
+  scene:SetPoint("TOPLEFT", PAD + ACT_W, -HEAD_H)          -- right of your buttons' column
   scene:SetPoint("RIGHT", -PAD, 0)
   scene:SetHeight(100)
   self.scene = scene
@@ -3006,12 +3010,13 @@ end
 -- the row widens to COLS, then wraps to a new row, up to MAX_ROWS. Each row is
 -- centred, so a part-full last row sits under the middle. The control row above
 -- never moves - only this seat area below it changes size.
-local function GridLayout(self, n)
+local function GridLayout(self, n, minW)
   local scene = self.scene
   Extremes()
   local rows = (n == 0) and 0 or math.min(MAX_ROWS, math.ceil(n / COLS))
   local widest = math.min(COLS, math.max(n, 1))
-  local w = math.max(widest * CELL_W + PAD * 2, MIN_W)
+  -- the seats' own width; the window adds your buttons' column (ACT_W) to it
+  local w = math.max(widest * CELL_W + PAD * 2, MIN_W - ACT_W, minW or 0)
   local base = scene:GetFrameLevel() + 2
 
   for i, seat in ipairs(self.seats) do
@@ -3052,7 +3057,19 @@ function UI:Layout()
     self.boardPanel:SetPoint("TOPLEFT", above, "BOTTOMLEFT", 0, -4)
     self.boardPanel:SetPoint("RIGHT", self.frame, "RIGHT", -PAD, 0)
   end
-  self.frame:SetSize(w, HEAD_H + h + dh + bh + PAD + 28)
+  -- 1.43:1 (Arn, 17 Oct: "fix this window up, like the new aspect ratio"): never shorter than your
+  -- four buttons; too narrow for its height, the seats get the extra width (and stay centred); too
+  -- wide, the room goes at the bottom
+  local content = math.max(h + dh + bh, 4 * 28)
+  local H = HEAD_H + content + PAD + 28
+  local W = w + ACT_W
+  if W < H * RATIO then
+    W = math.floor(H * RATIO + 0.5)
+    w = GridLayout(self, n, W - ACT_W)
+  else
+    H = math.floor(W / RATIO + 0.5)
+  end
+  self.frame:SetSize(W, H)
   if n == 0 then self.empty:Show() else self.empty:Hide() end
 end
 
@@ -3168,9 +3185,14 @@ function UI:Refresh()
   SetOff(self.callBtn, not open or counting)
   SetHot(self.endBtn, running and (s == "ROLL" or s == "TIE"))
   SetOff(self.endBtn, not running)
-  self.joinBtn.text:SetText(seated and "leave" or "join")
-  SetHot(self.joinBtn, s == "JOIN" and not seated)
-  SetOff(self.joinBtn, s ~= "JOIN")
+  -- ONLY THE NEXT THING IS LIT (17 Oct 2026): a table open and you out - join; in - leave; your
+  -- turn - roll; you lost - pay. The others are dim, in their places.
+  local joinNow = s == "JOIN" and not seated
+  local leaveNow = s == "JOIN" and seated
+  SetHot(self.joinBtn, joinNow)
+  SetOff(self.joinBtn, not joinNow)
+  SetHot(self.leaveBtn, leaveNow)
+  SetOff(self.leaveBtn, not leaveNow)
   local can = Game.CanRoll()
   -- the one cue that matters most: it is your turn and the button just lit up
   if can and not self.couldRoll then Sound.Play("you") end
@@ -3186,10 +3208,10 @@ function UI:Refresh()
   elseif owes > 0 then
     label = "pay " .. Gold(owes)
   end
-  SetHot(self.payBtn, owes > 0)
+  SetHot(self.payBtn, owes > 0 or Trade.live)
+  SetOff(self.payBtn, not (owes > 0 or Trade.live))
   self.payBtn.text:SetText(label)
   self.payBtn.tip = tip
-  self.payBtn:SetWidth(math.max(40, 24 + #label * 6))
   if not (self.wager.HasFocus and self.wager:HasFocus()) then
     self.wager:SetText(tostring((s == "IDLE" or s == "DONE") and db.wager or Game.max))
   end
