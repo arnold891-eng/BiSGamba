@@ -344,8 +344,9 @@ do
   fh:close()
 end
 assert(#TOC >= 2, "the TOC lists files")
-assert(TOC[#TOC - 1] == "BiSGamba.lua" and TOC[#TOC] == "API.lua",
-  "the addon is the last TOC line but one; API.lua (BiSGambaAPI) loads after everything it calls")
+-- Deathroll.lua (16 Oct 2026) builds on BiSGamba.lua's kit, so it comes straight after it
+assert(TOC[#TOC - 2] == "BiSGamba.lua" and TOC[#TOC - 1] == "Deathroll.lua" and TOC[#TOC] == "API.lua",
+  "BiSGamba.lua, then Deathroll.lua, then API.lua (BiSGambaAPI) last - it loads after everything it calls")
 for _, f in ipairs(TOC) do
   local fn = assert(loadfile(f), "TOC lists a file that does not exist: " .. f)
   fn("BiSGamba")
@@ -2358,6 +2359,104 @@ do
   local bad = stale("BiSGamba.lua", true)
   for _, f in ipairs(stale("README.md", false)) do bad[#bad + 1] = f end
   check(#bad == 0, "no user-facing text says /gamba as the command to type: " .. table.concat(bad, ", "))
+end
+
+---------------------------------------------------------------- deathroll (Deathroll.lua)
+-- Arn, 16 Oct 2026: "maybe we do this for our bis gamba so people can deathroll each other" -
+-- "maybe its only challenging people in same raid or party or guild"
+do
+  local D = G.Deathroll
+  check(D ~= nil, "Deathroll.lua loaded")
+  local realNum, realInfo, realIn = GetNumGuildMembers, GetGuildRosterInfo, IsInGuild
+  local ROSTER = { "Kumlust-Dreamscythe", "Frank G-Dreamscythe", "Dps2-Dreamscythe", "Busy Bee-Dreamscythe" }
+  GetNumGuildMembers = function() return #ROSTER end
+  GetGuildRosterInfo = function(i) return ROSTER[i] end
+  IsInGuild = function() return true end
+  local function last() runTimers(1) return addon[#addon] or "" end
+  local function mine(prefix) runTimers(1) local n = 0 for _, m in ipairs(addon) do if m:find("^" .. prefix) then n = n + 1 end end return n end
+  BiSGambaDB.debts = {}
+
+  -- who
+  local ok, why = D.Challenge("Stranger", 1000, 50)
+  check(not ok and why:find("not in your group or guild"), "a stranger cannot be challenged: " .. tostring(why))
+  ok, why = D.Challenge("Frank", 1000, 50)
+  check(not ok, "\"Frank\" is not \"Frank G\": the whole name or nothing")
+  ok = D.Challenge("Kumlust", 1000, 50)
+  check(not ok, "not yourself")
+  ok, why = D.Challenge("Frank G", 1, 50)
+  check(not ok, "a start of 1 is not a game")
+
+  -- a guildmate outside the group, whole name with a space
+  addon = {}
+  ok = D.Challenge("  Frank G ", 1000, 50)
+  check(ok and D.game.state == "ASKED" and D.game.foe == "Frank G", "a guildmate outside the group can be challenged")
+  check(last():find("^DRASK\tKumlust:dr%d+\t1000\t50$"), "the challenge goes out: " .. last())
+  local id = D.game.id
+  check(not D.Challenge("Dps2", 100, 1), "one deathroll at a time")
+  from("Frank G", "DRYES", id)
+  check(D.game.state == "PLAY" and D.game.turn == "Kumlust", "accepted: the challenger rolls first")
+  G.UI:Show(); D.Show(); D.Refresh()
+  check(D.frame:IsShown(), "the window is up")
+  check(math.abs(D.frame.w / D.frame.h - 1.43) < 0.01, "1.43:1, the BiS shape")
+  fitsIn(BiSGambaDeathroll, "the deathroll window, rolling")
+  local before = #rolled
+  D.frame.go.scripts.OnClick()
+  check(#rolled == before + 1 and rolled[#rolled][1] == 1 and rolled[#rolled][2] == 1000, "roll: /roll 1-1000")
+  D.frame.go.scripts.OnClick()
+  check(#rolled == before + 1, "a second press before it lands rolls nothing")
+  fire("CHAT_MSG_SYSTEM", "Kumlust rolls 300 (1-1000)")
+  check(D.game.turn == "Frank G" and D.game.max == 300, "300: their turn, 1-300")
+  check(last() == "DRROLL\t" .. id .. "\t300\t1000", "and they are told - outside the group they never see it: " .. last())
+  from("Frank G", "DRROLL", id, "120", "999")
+  check(D.game.max == 300, "a roll against the wrong number is not counted")
+  from("Dps2", "DRROLL", id, "1", "300")
+  check(D.game.turn == "Frank G", "and nobody else can roll for them")
+  from("Frank G", "DRROLL", id, "120", "300")
+  check(D.game.turn == "Kumlust" and D.game.max == 120, "their 120: back to us, 1-120")
+  fire("CHAT_MSG_SYSTEM", "Kumlust rolls 1 (1-120)")
+  check(D.game.state == "DONE" and D.game.loser == "Kumlust" and D.game.winner == "Frank G", "a 1 loses")
+  local owed
+  for _, d in ipairs(BiSGambaDB.debts) do if d.from == "Kumlust" and d.to == "Frank G" then owed = d.amount end end
+  check(owed == 50, "and the wager is in the debts book: " .. tostring(owed))
+  check(BiSGambaDB.rounds[id] and BiSGambaDB.rounds[id].mode == "dr", "and on the leaderboard as a deathroll")
+  D.Refresh()
+  check(strip(D.frame.line1.text_):find("you owe Frank G 50g", 1, true), "the window says so: " .. strip(D.frame.line1.text_))
+  fitsIn(BiSGambaDeathroll, "the deathroll window, over")
+  D.frame.alt.scripts.OnClick()
+  check(D.game == nil, "done clears it")
+
+  -- challenged, by someone in the group, for fun
+  addon = {}
+  from("Dps2", "DRASK", "Dps2:dr1", "500", "0")
+  check(D.game and D.game.state == "INVITED" and D.frame:IsShown(), "a challenge from the group: the window asks")
+  fitsIn(BiSGambaDeathroll, "the deathroll window, asking")
+  from("Stranger", "DRASK", "Stranger:dr1", "500", "0")
+  check(D.game.foe == "Dps2" and mine("DRNO") == 0, "a stranger's challenge is not even answered")
+  from("Busy Bee", "DRASK", "Busy Bee:dr1", "500", "0")
+  check(D.game.foe == "Dps2" and last():find("^DRNO\tBusy Bee:dr1\tbusy"), "a second one while busy: \"busy\"")
+  D.frame.go.scripts.OnClick()
+  check(last() == "DRYES\tDps2:dr1" and D.game.turn == "Dps2", "accept: they roll first")
+  fire("CHAT_MSG_SYSTEM", "Dps2 rolls 1 (1-500)")
+  check(D.game.state == "DONE" and D.game.winner == "Kumlust", "in the group, their roll is read straight from chat")
+  from("Dps2", "DRROLL", "Dps2:dr1", "1", "500")
+  check(D.game.state == "DONE" and #D.game.rolls == 1, "and their own word for it does not count it twice")
+  local fun = false
+  for _, d in ipairs(BiSGambaDB.debts) do if d.from == "Dps2" and d.to == "Kumlust" then fun = true end end
+  check(not fun and not BiSGambaDB.rounds["Dps2:dr1"], "for fun: no debt, nothing on the board")
+  D.game = nil
+
+  -- unanswered
+  ok = D.Challenge("Frank G", 1000, 5)
+  runTimers(D.ANSWER + 1)
+  check(D.game == nil, "no answer in a minute: it is dropped (they may not run BiS Gamba)")
+
+  -- the slash command and the button
+  SlashCmdList.BISGAMBA("dr Frank G")
+  check(D.frame:IsShown() and D.frame.who:GetText() == "Frank G", "/bisgamba dr <name> opens it, the name filled in")
+  check(G.UI.drBtn ~= nil, "a deathroll button on the table")
+  fitsIn(BiSGambaFrame, "the table with the deathroll button")
+  D.frame:Hide()
+  GetNumGuildMembers, GetGuildRosterInfo, IsInGuild = realNum, realInfo, realIn
 end
 
 print(("%d checks, %d failed"):format(pass + fail, fail))

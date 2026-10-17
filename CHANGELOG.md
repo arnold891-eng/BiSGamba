@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Deathroll.** Challenge one player in your party, raid or guild: pick a start (1000) and a wager in gold, or 0 just for fun. They accept or decline in a window. The challenger rolls first, then each roll goes from 1 to the last number, and whoever rolls a 1 pays. The rolls are real `/roll`s; the wager goes in the same debts book as a high/low round, with the same "pay" and trade, and on the leaderboard. Button bottom left on the table, or `/bisgamba dr <name>`. Use the whole name ("Frank G", not "Frank").
+
 - **Your debts first.** The debts list shows what you owe and are owed at the top. Everybody else's fold into one line ("4 debts between others") that opens if you want to see them.
 - **Debts nobody's addon can see paid clear themselves.** When neither player runs BiS Gamba, no addon ever sees their trade, so their debt used to sit there until someone clicked "paid". It now says "on their honour" and leaves the book the day after.
 - **Paying someone without the addon counts.** When you pay through a trade and the person you paid doesn't run BiS Gamba, your own completed trade clears the debt for everyone with the addon, not just for you.

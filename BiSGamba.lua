@@ -1591,6 +1591,9 @@ end
 function Game.OnComm(msg, sender)
   sender = Bare(sender)
   if not sender or sender == MyName() then return end
+  -- a deathroll is one-on-one and may be with a guildmate outside the group: Deathroll.lua
+  -- does its own check of who may talk to it
+  if msg:sub(1, 2) == "DR" and G.Deathroll then return G.Deathroll.OnComm(msg, sender) end
   -- Whispers can come from anybody on the realm. Nothing in this protocol has
   -- any business arriving from outside the group, so nothing outside is heard.
   if not InGroup(sender) then return end
@@ -2229,6 +2232,13 @@ local function SetOff(b, off)
   end
 end
 
+-- what Deathroll.lua (loaded after this file) builds with: the same buttons, names and money words
+G.Kit = {
+  SmallButton = SmallButton, SetHot = SetHot, SetOff = SetOff, Gold = Gold, MyName = MyName,
+  Bare = Bare, InGroup = InGroup, Now = Now, After = After, Print = Print, Warn = Warn,
+  DB = function() return db end,
+}
+
 local function NpcFor(race, sex)
   sex = (sex == 3) and 3 or 2
   local o = db.npc and db.npc[race] and db.npc[race][sex]
@@ -2787,6 +2797,13 @@ function UI:Build()
     end)
   auto:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -7, 4)
   self.autoOpen = auto
+
+  -- one on one (Deathroll.lua): bottom left, where the footer had room
+  local dr = SmallButton(f, "deathroll", 66)
+  dr:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 8, 3)
+  dr.tip = "Challenge one player in your group or guild: roll down from a number, whoever rolls 1 pays"
+  dr:SetScript("OnClick", function() if G.Deathroll then G.Deathroll.Toggle() end end)
+  self.drBtn = dr
 
   local snd = FooterCheck("sound",
     "Play the sound cues: last call, your turn to roll, winning, losing.",
@@ -3702,6 +3719,7 @@ local function Help()
     "/bisgamba history      the last ten rounds",
     "/bisgamba hidden       how often the game hid chat from the addon this session",
     "/bisgamba scope [guild|all]   whether pug rounds count on the board",
+    "/bisgamba dr [name]   deathroll one player in your group or guild",
     "/bisgamba wipestats yes       throw away your ledger",
     "/bisgamba wipestats all       ask everyone with the addon to wipe theirs too",
     "/bisgamba paid A B     mark A's debt to B paid",
@@ -3856,6 +3874,8 @@ local function Slash(msg)
   elseif cmd == "adopt" then
     local who = rest ~= "" and Bare(rest) or (G.BestLedger())
     if who then G.Adopt(who) else Print("nobody has a fuller ledger than yours - open the board and hit sync first") end
+  elseif (cmd == "dr" or cmd == "deathroll") and G.Deathroll then
+    G.Deathroll.Slash(rest)
   elseif cmd == "scope" then
     local v = rest:lower()
     db.boardScope = (v == "all" or v == "guild") and v or ((G.Scope() == "guild") and "all" or "guild")
@@ -4002,7 +4022,10 @@ ev:SetScript("OnEvent", function(_, event, a1, a2, ...)
     Rebuild()                        -- guild is usually known by login; recompute the scoped board
   elseif event == "CHAT_MSG_SYSTEM" then
     local who, roll, lo, hi = ParseRoll(a1 or "")
-    if who then Game.OnRoll(who, roll, lo, hi) end
+    if who then
+      if G.Deathroll then G.Deathroll.OnRoll(who, roll, lo, hi) end
+      Game.OnRoll(who, roll, lo, hi)
+    end
   elseif CHAT[event] then
     Game.OnChat(a1, a2)
   elseif event == "CHAT_MSG_ADDON" then
