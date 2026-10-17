@@ -1,5 +1,5 @@
 ## Interface: 20506, 16001
-## Title: BiS Gamba
+## Title: |cffb980ffBiS>|rGamba
 ## Category: |cffb980ffBiS>|rAddons
 ## Notes: Lightweight high/low gold gambling for raid nights - shared table, debt ledger, one-click payouts, leaderboard.
 ## Author: Kumlust
