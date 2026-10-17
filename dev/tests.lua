@@ -2399,6 +2399,7 @@ do
   check(D.frame:IsShown(), "the window is up")
   check(math.abs(D.frame.w / D.frame.h - 1.43) < 0.01, "1.43:1, the BiS shape")
   fitsIn(BiSGambaDeathroll, "the deathroll window, rolling")
+  check(strip(D.frame.go.text.text_) == "/roll 1000", "the button says the exact roll: " .. strip(D.frame.go.text.text_))
   local before = #rolled
   D.frame.go.scripts.OnClick()
   check(#rolled == before + 1 and rolled[#rolled][1] == 1 and rolled[#rolled][2] == 1000, "roll: /roll 1-1000")
@@ -2413,6 +2414,8 @@ do
   check(D.game.turn == "Frank G", "and nobody else can roll for them")
   from("Frank G", "DRROLL", id, "120", "300")
   check(D.game.turn == "Kumlust" and D.game.max == 120, "their 120: back to us, 1-120")
+  D.Refresh()
+  check(strip(D.frame.go.text.text_) == "/roll 120", "they rolled 120: the button is /roll 120")
   fire("CHAT_MSG_SYSTEM", "Kumlust rolls 1 (1-120)")
   check(D.game.state == "DONE" and D.game.loser == "Kumlust" and D.game.winner == "Frank G", "a 1 loses")
   local owed
@@ -2469,8 +2472,8 @@ do
   local names = {}
   for _, r in ipairs(D.frame.rows) do if r:IsShown() and r.person then names[#names + 1] = r.person.name end end
   check(#names >= 2 and not table.concat(names, ","):find("Kumlust"), "your party or raid, without you: " .. table.concat(names, ","))
-  check((D.frame.start:GetText() or "") == "" and (D.frame.bet:GetText() or "") == "",
-        "no number filled in for you (Arn: \"no prefilled number\")")
+  check(D.frame.start == nil, "no \"start at\" box (Arn: \"the start at is not needed\")")
+  check((D.frame.bet:GetText() or "") == "", "and no number filled in for you (Arn: \"no prefilled number\")")
   check(D.frame.go.off, "challenge waits for someone picked")
   fitsIn(BiSGambaDeathroll, "the deathroll window, picking")
   local first
@@ -2480,11 +2483,17 @@ do
         "clicked: they stand on the right")
   addon = {}
   D.frame.go.scripts.OnClick()
-  check(D.game == nil, "no start typed: nothing is sent")
-  D.frame.start:SetText("500")
+  check(D.game == nil, "no gold typed: nothing is sent")
+  D.frame.bet:SetText("500")
   D.frame.go.scripts.OnClick()
-  check(D.game and D.game.start == 500 and D.game.wager == 0, "a start typed, the wager empty: for fun")
+  check(D.game and D.game.start == 500 and D.game.wager == 500, "500 gold: the rolls start at 500, for 500g")
   D.TakeBack()
+  D.frame.fun.scripts.OnClick()
+  D.frame.go.scripts.OnClick()
+  check(D.game and D.game.start == 500 and D.game.wager == 0, "\"for fun\": from 500, nobody owes anybody")
+  D.TakeBack()
+  D.frame.fun.scripts.OnClick()
+  D.frame.bet:SetText("")
   inRaid = wasRaid
 
   -- the slash command and the button

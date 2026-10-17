@@ -398,14 +398,18 @@ function D.Build()
   mid:SetPoint("BOTTOMRIGHT", f.them, "BOTTOMLEFT", -10, 0)
   f.mid = mid
   local mw = D.W - 2 * D.SIDE - 40
-  f.startL = Label(mid, "start at")
-  f.startL:SetPoint("TOP", mid, "TOP", -mw / 4, -24)
-  f.start = Box(mid, mw / 2 - 6, true, "1000?")
-  f.start:SetPoint("TOP", f.startL, "BOTTOM", 0, -4)
-  f.betL = Label(mid, "wager (gold)")
-  f.betL:SetPoint("TOP", mid, "TOP", mw / 4, -24)
-  f.bet = Box(mid, mw / 2 - 6, true, "for fun")
+  -- ONE NUMBER (Arn, 17 Oct: "the start at is not needed it almost always start at the gold
+  -- wagered"): the gold you bet is where the rolls start. "for fun" keeps the number as the start
+  -- and bets nothing.
+  f.betL = Label(mid, "gold - the rolls start here")
+  f.betL:SetPoint("TOP", mid, "TOP", 0, -26)
+  f.bet = Box(mid, mw - 40, true, "500?")
   f.bet:SetPoint("TOP", f.betL, "BOTTOM", 0, -4)
+  f.bet:SetText("")                                   -- empty: no number filled in for you
+  f.fun = K.SmallButton(mid, "for fun - no gold", mw - 40)
+  f.fun:SetPoint("TOP", f.bet, "BOTTOM", 0, -6)
+  f.fun.tip = "Roll down from that number, but nobody owes anybody"
+  f.fun:SetScript("OnClick", function() D.fun = not D.fun K.SetHot(f.fun, D.fun) D.Refresh() end)
 
   f.line1 = mid:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   f.line1:SetPoint("TOP", mid, "TOP", 0, -8)
@@ -437,10 +441,14 @@ function D.Go()
   if not g or g.state == "DONE" then
     local again = g and g.state == "DONE"
     local foe = again and g.foe or D.pick
-    local start = again and g.start or f.start:GetText()
-    local wager = again and g.wager or f.bet:GetText()
-    if not again and (start == nil or start == "") then K.Warn("deathroll: type where to start (1000?)") return end
-    if wager == nil or wager == "" then wager = 0 end
+    local start, wager
+    if again then
+      start, wager = g.start, g.wager
+    else
+      local gold = tonumber(f.bet:GetText() or "")
+      if not gold or gold < 2 then K.Warn("deathroll: type how much gold - the rolls start there") return end
+      start, wager = gold, D.fun and 0 or gold
+    end
     D.game = nil
     local ok, why = D.Challenge(foe, start, wager)
     if not ok then K.Warn("deathroll: " .. why) end
@@ -517,7 +525,7 @@ function D.Refresh()
     b:Show()
   end
   local setup = not g
-  for _, r in ipairs({ f.startL, f.start, f.betL, f.bet }) do if setup then r:Show() else r:Hide() end end
+  for _, r in ipairs({ f.betL, f.bet, f.fun }) do if setup then r:Show() else r:Hide() end end
   f.line1:SetText("") f.line2:SetText("") f.log:SetText("")
   if not g then
     f.line1:SetText(T.text("muted", foe and "how much?" or "pick someone"))
@@ -542,7 +550,9 @@ function D.Refresh()
     f.line1:SetText(mine and T.text("gold", ("your roll: 1 - %d"):format(g.max))
       or T.text("ink", ("%s: 1 - %d"):format(g.turn, g.max)))
     f.line2:SetText(T.text("muted", ("for %s"):format(stake)))
-    lbl(f.go, "roll", not mine or g.rolled)
+    -- THE BUTTON SAYS THE ROLL (Arn, 17 Oct: "like roll /500 and if the other person got 450 they get
+    -- a /roll 450 button"): the exact range, one press, on your turn; greyed on theirs
+    lbl(f.go, mine and ("/roll " .. g.max) or "their roll", not mine or g.rolled)
     if f.go.hot ~= mine then K.SetHot(f.go, mine) end
     f.alt:Hide()
   else
