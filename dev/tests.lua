@@ -633,6 +633,13 @@ TradeFrame.shown = false
 fire("TRADE_CLOSED"); fire("TRADE_CLOSED")
 fire("UI_INFO_MESSAGE", 1, "Trade complete.")
 check(G.Ledger.Net("Kumlust") == 0, "debt cleared after the trade")
+-- the person paid runs the addon or not: only when they do not does the payer say it for them
+do
+  local saidD = false
+  for _, m in ipairs(addon) do if m:find("^PAID\tKumlust\tDps1\t40\tD") then saidD = true end end
+  check(saidD == not G.Comm.HasAddon("Dps1"),
+        "the payer announces its own trade (\"D\") exactly when the person paid has no addon")
+end
 check(chat[#chat]:find("square"), "paid message: " .. lastChat())
 -- a requested but not yet accepted trade must never be filled
 G.Ledger.Add("Kumlust", "Dps1", 32)
@@ -908,6 +915,71 @@ local function pairAmt(a,b) for _, d in ipairs(BiSGambaDB.debts) do if d.from==a
 check(pairAmt("Kumsecration","Dps2") == 40, "and neither can a debtor for someone else")
 from("Dps2", "PAID", "Kumsecration", "Dps2", "40")    -- the creditor: honoured
 check(pairAmt("Kumsecration","Dps2") == 0, "the creditor's PAID clears it")
+
+---------------------------------------------------------------- debts nobody's addon can see paid
+-- Arn, 16 Oct 2026: "showed debts not paid on gambles because the people did not have the addon
+-- installed so i had to click the buttons as paid"
+do
+  BiSGambaDB.users = BiSGambaDB.users or {}
+  BiSGambaDB.users.Kumsecration = os.time()            -- seen with the addon
+  -- 1. the debtor's own trade counts when the person owed has no addon ("D")
+  G.Ledger.Add("Dps2", "Pugone", 30)
+  from("Dps2", "PAID", "Dps2", "Pugone", "30", "D")
+  check(pairAmt("Dps2", "Pugone") == 0, "a debtor's completed trade clears it when the person owed has no addon")
+  G.Ledger.Add("Dps2", "Kumsecration", 30)
+  from("Dps2", "PAID", "Dps2", "Kumsecration", "30", "D")
+  check(pairAmt("Dps2", "Kumsecration") == 30, "but not when the person owed runs the addon - they say it themselves")
+  from("Pugone", "PAID", "Dps2", "Kumsecration", "30", "D")
+  check(pairAmt("Dps2", "Kumsecration") == 30, "and nobody but the debtor can send the trade's word")
+  G.Ledger.Clear("Dps2", "Kumsecration")
+
+  -- 2. on their honour: neither runs the addon. Shown so, and gone after the night
+  G.Ledger.Add("Pugone", "Pugtwo", 20)
+  local d
+  for _, x in ipairs(BiSGambaDB.debts) do if x.from == "Pugone" and x.to == "Pugtwo" then d = x end end
+  check(G.Ledger.Honour(d), "two people without the addon: on their honour")
+  G.Ledger.Add("Pugone", "Kumsecration", 10)
+  local e
+  for _, x in ipairs(BiSGambaDB.debts) do if x.from == "Pugone" and x.to == "Kumsecration" then e = x end end
+  check(not G.Ledger.Honour(e), "one of them runs it: not honour - it can still be seen paid")
+  check(G.Ledger.Expire() == 0, "nothing expires the same night")
+  d.at = d.at - G.Ledger.HONOUR_TTL - 1
+  e.at = e.at - G.Ledger.HONOUR_TTL - 1
+  check(G.Ledger.Expire() == 1 and pairAmt("Pugone", "Pugtwo") == 0, "the next day the honour debt has left the book")
+  check(pairAmt("Pugone", "Kumsecration") == 10, "a debt someone's addon can see is kept")
+  G.Ledger.Clear("Pugone", "Kumsecration")
+
+  -- 3. yours first; everybody else's folded into one line
+  G.Ledger.Add("Kumlust", "Dps1", 15)
+  G.Ledger.Add("Pugone", "Pugtwo", 20)
+  G.Ledger.Add("Dps2", "Pugthree", 25)
+  G.UI:Show(); G.UI.showOthers = nil
+  if not G.UI.debtPanel:IsShown() then G.UI:ToggleDebts() end
+  G.UI:Refresh()
+  local lines = {}
+  for _, r in ipairs(G.UI.rows) do if r.shown and r.text.text_ then lines[#lines + 1] = strip(r.text.text_) end end
+  check(lines[1] and lines[1]:find("you", 1, true), "your own debts first: " .. tostring(lines[1]))
+  local mineAt, foldAt
+  for i, t in ipairs(lines) do
+    if t:find("^you owe Dps1") then mineAt = i end
+    if t:find("between others") then foldAt = i end
+  end
+  check(mineAt and foldAt and mineAt < foldAt, "all of yours above everybody else's")
+  local fold
+  for i, t in ipairs(lines) do if t:find("debts? between others") then fold = i end end
+  check(fold and lines[fold]:find("show"), "the rest folded into one line: " .. tostring(fold and lines[fold]))
+  check(#lines == fold, "and nothing of theirs below it until it is opened")
+  G.UI.rows[fold].scripts.OnClick()
+  lines = {}
+  for _, r in ipairs(G.UI.rows) do if r.shown and r.text.text_ then lines[#lines + 1] = strip(r.text.text_) end end
+  local hon
+  for _, t in ipairs(lines) do if t:find("Pugone owes Pugtwo") then hon = t end end
+  check(hon and hon:find("on their honour"), "opened: theirs are listed, the unseeable one on their honour: " .. tostring(hon))
+  fitsIn(BiSGambaFrame, "the table with the debts open and others shown")
+  G.UI.showOthers = nil
+  G.UI:ToggleDebts()
+  G.Ledger.Clear("Kumlust", "Dps1"); G.Ledger.Clear("Pugone", "Pugtwo"); G.Ledger.Clear("Dps2", "Pugthree")
+end
 from("Dps2", "CLOSE")
 check(G.Game.state == "DONE", "CLOSE after DONE leaves the result up")
 -- HI from a client while hosting -> replay

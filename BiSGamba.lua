@@ -682,6 +682,30 @@ end
 
 function Ledger.ClearAll() db.debts = {} end
 
+--- ON THEIR HONOUR (Arn, 16 Oct 2026: "bis gamba on a raid night showed debts not paid on gambles
+--- because the people did not have the addon installed so i had to click the buttons as paid").
+--- A debt between two other people, neither of whom runs the addon: no trade of theirs is ever
+--- seen by anybody's addon, so it can never be marked paid. It is shown as on their honour and
+--- leaves the book by itself once the night is over (Ledger.HONOUR_TTL after its last change).
+Ledger.HONOUR_TTL = 12 * 60 * 60
+function Ledger.Honour(d)
+  local me = MyName()
+  if not d or d.from == me or d.to == me then return false end
+  return not G.Comm.HasAddon(d.from) and not G.Comm.HasAddon(d.to)
+end
+
+function Ledger.Expire()
+  local now, gone = Now(), 0
+  for i = #db.debts, 1, -1 do
+    local d = db.debts[i]
+    if Ledger.Honour(d) and now - (d.at or 0) > Ledger.HONOUR_TTL then
+      table.remove(db.debts, i)
+      gone = gone + 1
+    end
+  end
+  return gone
+end
+
 --- what one person owes and is owed, in total
 function Ledger.Net(name)
   local owes, owed = 0, 0
@@ -1585,11 +1609,15 @@ function Game.OnComm(msg, sender)
   if op == "PAID" then
     local from, to, amount, how = parts[2], parts[3], tonumber(parts[4]), parts[5]
     -- only the person who is owed can say they have been paid; a debtor's word
-    -- for it is not worth anything
-    if not (from and to and amount) or sender ~= to then return end
+    -- for it is not worth anything - EXCEPT (16 Oct 2026) "D": the debtor's own client saw the
+    -- trade complete and the person owed has no addon to say so. That is the trade itself, not
+    -- a claim, and without it the debt could never clear.
+    if not (from and to and amount) then return end
+    local debtorTrade = how == "D" and sender == from and not Comm.HasAddon(to)
+    if sender ~= to and not debtorTrade then return end
     -- a payment we were a party to was booked on our own client when the trade
-    -- completed, so the creditor's announcement of it is not applied twice here
-    if how == "T" and (from == MyName() or to == MyName()) then return end
+    -- completed, so the announcement of it is not applied twice here
+    if (how == "T" or how == "D") and (from == MyName() or to == MyName()) then return end
     local paid = Ledger.Pay(from, to, amount)
     if paid > 0 then
       Print(("%s paid %s %s"):format(from == MyName() and "you" or from, to == MyName() and "you" or to, Gold(paid)))
@@ -2038,6 +2066,9 @@ function Trade.OnComplete()
   if gaveG > 0 then
     local paid = Ledger.Pay(me, who, gaveG)
     if paid > 0 then
+      -- the person we paid has no addon, so nobody else would ever hear it: say so ourselves,
+      -- marked "D" - our own trade, which everyone else believes only in exactly this case
+      if not Comm.HasAddon(who) then Comm.Send("PAID", me, who, paid, "D") end
       local left = FindDebt(me, who)
       Print(("paid %s %s%s"):format(who, Gold(paid), left and (", " .. Gold(left.amount) .. " to go") or " - square"))
     end
@@ -2838,6 +2869,10 @@ function UI:Build()
       UI:Refresh()
     end)
     row.paid = x
+    -- the "N debts between others" line opens and closes the rest
+    row:SetScript("OnClick", function()
+      if row.toggle then UI.showOthers = not UI.showOthers; UI:Refresh() end
+    end)
     row:Hide()
     self.rows[i] = row
   end
@@ -2984,7 +3019,7 @@ function UI:Layout()
   self.scene:SetHeight(h)
   local dh = 0
   if self.debtPanel:IsShown() then
-    local shown = math.min(12, #db.debts)
+    local shown = math.min(12, #self:DebtLines())
     dh = 12 + math.max(1, shown) * 16 + 4
     self.debtPanel:SetHeight(dh - 4)
   end
@@ -3208,32 +3243,64 @@ function UI:ToggleBoard()
   self:Refresh()
 end
 
+--- YOURS FIRST, THE REST FOLDED (Arn, 16 Oct 2026). The panel's lines, in order: your debts in
+--- full, then one "N debts between others" line that opens the rest - faded, and marked "on
+--- their honour" where neither of them runs the addon (Ledger.Honour).
+function UI:DebtLines()
+  Ledger.Expire()
+  local me, mine, others = MyName(), {}, {}
+  for _, d in ipairs(db.debts) do
+    if d.from == me or d.to == me then mine[#mine + 1] = d else others[#others + 1] = d end
+  end
+  local byAmount = function(a, b) return a.amount > b.amount end
+  table.sort(mine, byAmount)
+  table.sort(others, byAmount)
+  local lines = {}
+  for _, d in ipairs(mine) do lines[#lines + 1] = { debt = d } end
+  if #others > 0 then
+    lines[#lines + 1] = { toggle = true, n = #others }
+    if self.showOthers then
+      for _, d in ipairs(others) do lines[#lines + 1] = { debt = d, other = true, honour = Ledger.Honour(d) } end
+    end
+  end
+  return lines
+end
+
 function UI:RefreshDebts()
   local dp = self.debtPanel
   if not dp:IsShown() then return end
-  local list = {}
-  for _, d in ipairs(db.debts) do list[#list + 1] = d end
-  table.sort(list, function(a, b) return a.amount > b.amount end)
+  local lines = self:DebtLines()
   local me = MyName()
   for i, row in ipairs(self.rows) do
-    local d = list[i]
-    row.debt = d
-    if d then
+    local l = lines[i]
+    row.debt, row.toggle = l and l.debt, l and l.toggle
+    if l and l.toggle then
+      row.text:SetText(T.text("muted", ("%d debt%s between others  ·  %s"):format(l.n, l.n == 1 and "" or "s",
+        self.showOthers and "hide" or "show")))
+      row.paid:Hide()
+      row:Show()
+    elseif l then
+      local d = l.debt
       local mine = d.from == me
-      local from = mine and T.text("gold", "you") or T.text("ink2", d.from)
-      local to = d.to == me and T.text("gold", "you") or T.text("ink2", d.to)
-      row.text:SetText(from .. T.text("muted", mine and " owe " or " owes ") .. to
-        .. "  " .. T.text(mine and "warn" or d.to == me and "good" or "ink", Gold(d.amount)))
+      if l.other then
+        row.text:SetText(T.text("muted", d.from .. " owes " .. d.to .. "  " .. Gold(d.amount)
+          .. (l.honour and "  ·  on their honour" or "")))
+      else
+        local from = mine and T.text("gold", "you") or T.text("ink2", d.from)
+        local to = d.to == me and T.text("gold", "you") or T.text("ink2", d.to)
+        row.text:SetText(from .. T.text("muted", mine and " owe " or " owes ") .. to
+          .. "  " .. T.text(mine and "warn" or d.to == me and "good" or "ink", Gold(d.amount)))
+      end
+      row.paid:Show()
       row:Show()
     else
       row:Hide()
     end
   end
-  if #list == 0 then
+  if #lines == 0 then
+    self.rows[1].debt, self.rows[1].toggle = nil, nil
     self.rows[1].text:SetText(T.text("muted", "nobody owes anybody"))
     self.rows[1].paid:Hide(); self.rows[1]:Show()
-  else
-    self.rows[1].paid:Show()
   end
 end
 

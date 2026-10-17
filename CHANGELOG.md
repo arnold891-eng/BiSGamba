@@ -1,5 +1,11 @@
 # BiS Gamba - Changelog
 
+## Unreleased
+
+- **Your debts first.** The debts list shows what you owe and are owed at the top. Everybody else's fold into one line ("4 debts between others") that opens if you want to see them.
+- **Debts nobody's addon can see paid clear themselves.** When neither player runs BiS Gamba, no addon ever sees their trade, so their debt used to sit there until someone clicked "paid". It now says "on their honour" and leaves the book the day after.
+- **Paying someone without the addon counts.** When you pay through a trade and the person you paid doesn't run BiS Gamba, your own completed trade clears the debt for everyone with the addon, not just for you.
+
 ## 1.6.0
 
 - **BiSGambaAPI** - other BiS addons can read the leaderboard, standings, debts and recent rounds, and open the window. It's read-only: nothing else can move gold, settle a debt or place a bet.
