@@ -2237,6 +2237,8 @@ G.Kit = {
   SmallButton = SmallButton, SetHot = SetHot, SetOff = SetOff, Gold = Gold, MyName = MyName,
   Bare = Bare, InGroup = InGroup, Now = Now, After = After, Print = Print, Warn = Warn,
   DB = function() return db end,
+  -- the 3D duel (17 Oct 2026): who is who in the group, and the table's own reactions
+  UnitFor = UnitFor, GroupUnits = GroupUnits, ANIM = ANIM, WISP = WISP,
 }
 
 local function NpcFor(race, sex)

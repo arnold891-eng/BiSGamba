@@ -35,7 +35,10 @@ G.Deathroll = D
 
 D.START, D.MAX_START, D.MAX_WAGER = 1000, 1000000, 100000
 D.ANSWER = 60                     -- seconds a challenge waits for its answer
-D.W = 330                         -- 1.43:1, the BiS window shape
+-- 1.43:1, the BiS window shape - wide enough for a duel: you, the rolls, them (Arn, 17 Oct: "that looks
+-- too like fojji ... lets add 3d models. we are standing on the left them on the right, and rolls in
+-- the middle")
+D.W = 520
 D.H = math.floor(D.W / 1.43 + 0.5)
 
 local function db() return K.DB() end
@@ -172,6 +175,7 @@ function D.Finish(loser)
   end
   if G.UI and G.UI.Refresh then G.UI:Refresh() end
   D.Refresh()
+  if D.Celebrate then D.Celebrate(winner, loser) end
   return true
 end
 
@@ -224,11 +228,22 @@ function D.OnComm(msg, sender)
   end
 end
 
+
 --------------------------------------------------------------------
--- the window
+-- the window: a duel
+--
+-- YOU ON THE LEFT, THEM ON THE RIGHT, THE ROLLS IN THE MIDDLE (Arn, 17 Oct 2026, on the first form:
+-- "that looks too like fojji can we add a scrollable thing in ours about people in our party or raid
+-- and lets add 3d models"). Before a game the right side is the people in your group, a list you
+-- scroll and click; picked, it is them, in 3D, facing you. No number is filled in for you ("no
+-- prefilled number"): the start is yours to type, and an empty wager is for fun.
 --------------------------------------------------------------------
 
-local function Box(f, w, numeric)
+D.SIDE = 150                      -- each model's column; the middle gets the rest
+D.ROWS, D.ROW_H = 9, 22           -- the people list
+D.FACE = 0.55                     -- radians each model turns toward the middle
+
+local function Box(f, w, numeric, hint)
   local b = CreateFrame("EditBox", nil, f, "BackdropTemplate")
   b:SetSize(w, 20)
   b:SetAutoFocus(false)
@@ -240,6 +255,16 @@ local function Box(f, w, numeric)
   b:SetBackdropColor(T.rgba("sunken", 1))
   b:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
   b:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+  -- the hint sits inside, faint, and goes the moment there is anything typed
+  if hint then
+    b.hint = b:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    b.hint:SetPoint("LEFT", 6, 0)
+    b.hint:SetText(hint)
+    b:SetScript("OnTextChanged", function(self)
+      local t = self:GetText()
+      if t == nil or t == "" then self.hint:Show() else self.hint:Hide() end
+    end)
+  end
   return b
 end
 
@@ -247,6 +272,50 @@ local function Label(f, text)
   local fs = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   fs:SetText(T.text("muted", text))
   return fs
+end
+
+local function Model(f)
+  local m = CreateFrame("DressUpModel", nil, f)
+  m:SetSize(D.SIDE, D.H - 74)
+  return m
+end
+
+--- Put somebody on a model: the real character when the client will draw them, a wisp otherwise
+--- (a guildmate far away, or someone not in the group at all).
+local function Wear(m, name, facing)
+  if not m then return end
+  pcall(m.ClearModel, m)
+  local unit = name and (name == K.MyName() and "player" or K.UnitFor(name))
+  local ok = false
+  if unit and (unit == "player" or (UnitIsVisible and UnitIsVisible(unit))) then
+    ok = pcall(m.SetUnit, m, unit)
+  end
+  if not ok then pcall(m.SetDisplayInfo, m, K.WISP) end
+  if m.SetPortraitZoom then pcall(m.SetPortraitZoom, m, 0) end
+  pcall(m.SetFacing, m, facing or 0)
+  pcall(m.SetAnimation, m, K.ANIM.stand)
+  m.who = name
+  m:Show()
+end
+
+--- Everyone in the party or raid you could challenge, by name, with their class.
+function D.People()
+  local out, me = {}, K.MyName()
+  for _, u in ipairs(K.GroupUnits()) do
+    if UnitExists and UnitExists(u) and not (UnitIsUnit and UnitIsUnit(u, "player")) then
+      local n = K.Bare(UnitName(u))
+      if n and n ~= me then
+        local _, class = UnitClass(u)
+        local online = not UnitIsConnected or UnitIsConnected(u)
+        out[#out + 1] = { name = n, class = class, online = online and true or false }
+      end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.online ~= b.online then return a.online end
+    return a.name < b.name
+  end)
+  return out
 end
 
 function D.Build()
@@ -271,41 +340,93 @@ function D.Build()
   close:SetPoint("TOPRIGHT", -8, -8)
   close:SetScript("OnClick", function() f:Hide() end)
 
-  -- the challenge form
-  f.whoL = Label(f, "player (whole name)")
-  f.whoL:SetPoint("TOPLEFT", 14, -40)
-  f.who = Box(f, D.W - 28)
-  f.who:SetPoint("TOPLEFT", f.whoL, "BOTTOMLEFT", -2, -4)
-  f.startL = Label(f, "start at")
-  f.startL:SetPoint("TOPLEFT", f.who, "BOTTOMLEFT", 2, -10)
-  f.start = Box(f, 120, true)
-  f.start:SetPoint("TOPLEFT", f.startL, "BOTTOMLEFT", -2, -4)
-  f.betL = Label(f, "wager (gold, 0 = for fun)")
-  f.betL:SetPoint("LEFT", f.startL, "LEFT", 150, 0)
-  f.bet = Box(f, 120, true)
-  f.bet:SetPoint("TOPLEFT", f.betL, "BOTTOMLEFT", -2, -4)
+  -- LEFT: you
+  f.me = Model(f)
+  f.me:SetPoint("TOPLEFT", 10, -34)
+  f.meName = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  f.meName:SetPoint("BOTTOM", f.me, "BOTTOM", 0, -16)
 
-  -- the game, in words
-  f.line1 = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  f.line1:SetPoint("TOP", f, "TOP", 0, -48)
-  f.line2 = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  f.line2:SetPoint("TOP", f.line1, "BOTTOM", 0, -8)
-  f.log = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.log:SetPoint("TOP", f.line2, "BOTTOM", 0, -10)
-  f.log:SetWidth(D.W - 28)
+  -- RIGHT: them, or the people to pick from
+  f.them = Model(f)
+  f.them:SetPoint("TOPRIGHT", -10, -34)
+  f.themName = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  f.themName:SetPoint("BOTTOM", f.them, "BOTTOM", 0, -16)
+  f.change = K.SmallButton(f, "pick someone else", D.SIDE - 20)
+  f.change:SetPoint("BOTTOM", f.them, "BOTTOM", 0, -40)
+  f.change:SetScript("OnClick", function() D.pick = nil D.Refresh() end)
 
-  -- the one button that matters, and the one beside it
-  f.go = K.SmallButton(f, "challenge", 110)
-  f.go:SetSize(110, 22)
-  f.go:SetPoint("BOTTOM", f, "BOTTOM", -60, 14)
+  local list = CreateFrame("Frame", nil, f)
+  list:SetPoint("TOPRIGHT", -10, -34)
+  list:SetSize(D.SIDE, D.ROWS * D.ROW_H + 4)
+  list:EnableMouseWheel(true)
+  list:SetScript("OnMouseWheel", function(_, delta)
+    D.scroll = math.max(0, math.min((D.scroll or 0) - delta, math.max(0, #D.People() - D.ROWS)))
+    D.Refresh()
+  end)
+  f.listHead = Label(f, "your party / raid")
+  f.listHead:SetPoint("BOTTOMLEFT", list, "TOPLEFT", 2, 2)
+  f.list, f.rows = list, {}
+  for i = 1, D.ROWS do
+    local r = CreateFrame("Button", nil, list)
+    r:SetSize(D.SIDE, D.ROW_H - 2)
+    r:SetPoint("TOPLEFT", 0, -(i - 1) * D.ROW_H)
+    r.bg = r:CreateTexture(nil, "BACKGROUND")
+    r.bg:SetAllPoints()
+    r.bg:SetColorTexture(T.rgba("sunken", 1))
+    r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    r.text:SetPoint("LEFT", 8, 0)
+    r.hl = r:CreateTexture(nil, "HIGHLIGHT")
+    r.hl:SetAllPoints()
+    r.hl:SetColorTexture(1, 1, 1, 0.08)
+    r:SetScript("OnClick", function(self)
+      if self.person and self.person.online then D.pick = self.person.name D.Refresh() end
+    end)
+    f.rows[i] = r
+  end
+  -- a guildmate outside the group: by whole name
+  f.who = Box(f, D.SIDE, false, "or a guildmate's whole name")
+  f.who:SetPoint("TOP", list, "BOTTOM", 0, -6)
+  f.who:SetScript("OnEnterPressed", function(self)
+    self:ClearFocus()
+    local n = self:GetText()
+    if n and n:match("%S") then D.pick = (n:gsub("^%s+", ""):gsub("%s+$", "")) D.Refresh() end
+  end)
+
+  -- MIDDLE: the numbers before, the rolls during
+  local mid = CreateFrame("Frame", nil, f)
+  mid:SetPoint("TOPLEFT", f.me, "TOPRIGHT", 10, 0)
+  mid:SetPoint("BOTTOMRIGHT", f.them, "BOTTOMLEFT", -10, 0)
+  f.mid = mid
+  local mw = D.W - 2 * D.SIDE - 40
+  f.startL = Label(mid, "start at")
+  f.startL:SetPoint("TOP", mid, "TOP", -mw / 4, -24)
+  f.start = Box(mid, mw / 2 - 6, true, "1000?")
+  f.start:SetPoint("TOP", f.startL, "BOTTOM", 0, -4)
+  f.betL = Label(mid, "wager (gold)")
+  f.betL:SetPoint("TOP", mid, "TOP", mw / 4, -24)
+  f.bet = Box(mid, mw / 2 - 6, true, "for fun")
+  f.bet:SetPoint("TOP", f.betL, "BOTTOM", 0, -4)
+
+  f.line1 = mid:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  f.line1:SetPoint("TOP", mid, "TOP", 0, -8)
+  f.line1:SetWidth(mw)
+  f.line2 = mid:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.line2:SetPoint("TOP", f.line1, "BOTTOM", 0, -6)
+  f.line2:SetWidth(mw)
+  f.log = mid:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  f.log:SetPoint("TOP", f.line2, "BOTTOM", 0, -12)
+  f.log:SetWidth(mw)
+  f.log:SetJustifyH("CENTER")
+
+  f.go = K.SmallButton(mid, "challenge", mw - 20)
+  f.go:SetSize(mw - 20, 24)
+  f.go:SetPoint("BOTTOM", mid, "BOTTOM", 0, 30)
   f.go:SetScript("OnClick", function() D.Go() end)
-  f.alt = K.SmallButton(f, "decline", 110)
-  f.alt:SetSize(110, 22)
-  f.alt:SetPoint("BOTTOM", f, "BOTTOM", 60, 14)
+  f.alt = K.SmallButton(mid, "close", mw - 20)
+  f.alt:SetSize(mw - 20, 20)
+  f.alt:SetPoint("TOP", f.go, "BOTTOM", 0, -4)
   f.alt:SetScript("OnClick", function() D.Alt() end)
 
-  f.start:SetText(tostring(D.START))
-  f.bet:SetText("0")
   f:Hide()
   return f
 end
@@ -314,9 +435,12 @@ end
 function D.Go()
   local g, f = D.game, D.frame
   if not g or g.state == "DONE" then
-    local foe = (g and g.state == "DONE") and g.foe or f.who:GetText()
-    local start = (g and g.state == "DONE") and g.start or f.start:GetText()
-    local wager = (g and g.state == "DONE") and g.wager or f.bet:GetText()
+    local again = g and g.state == "DONE"
+    local foe = again and g.foe or D.pick
+    local start = again and g.start or f.start:GetText()
+    local wager = again and g.wager or f.bet:GetText()
+    if not again and (start == nil or start == "") then K.Warn("deathroll: type where to start (1000?)") return end
+    if wager == nil or wager == "" then wager = 0 end
     D.game = nil
     local ok, why = D.Challenge(foe, start, wager)
     if not ok then K.Warn("deathroll: " .. why) end
@@ -331,77 +455,135 @@ function D.Alt()
   if not g then if D.frame then D.frame:Hide() end return end
   if g.state == "INVITED" then D.Answer(false)
   elseif g.state == "ASKED" then D.TakeBack()
-  elseif g.state == "DONE" then D.game = nil D.Refresh()
+  elseif g.state == "DONE" then D.game = nil D.pick = nil D.Refresh()
   end
 end
 
-local function Form(show)
-  local f = D.frame
-  for _, r in ipairs({ f.whoL, f.who, f.startL, f.start, f.betL, f.bet }) do
-    if show then r:Show() else r:Hide() end
-  end
+local function ClassColour(class, text)
+  local c = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+  if c and c.colorStr then return "|c" .. c.colorStr .. text .. "|r" end
+  return T.text("ink", text)
+end
+
+--- Who is on the right: the opponent of a game, else the one picked, else nobody (the list).
+local function Opponent()
+  local g = D.game
+  if g then return g.foe end
+  return D.pick
 end
 
 function D.Refresh()
   local f = D.frame
   if not f then return end
   local g, me = D.game, K.MyName()
+
+  -- you, always
+  if f.me.who ~= me then Wear(f.me, me, D.FACE) end
+  f.meName:SetText(T.text("gold", me or "you"))
+
+  -- them, or the list
+  local foe = Opponent()
+  if foe then
+    f.list:Hide(); f.listHead:Hide(); f.who:Hide()
+    if f.them.who ~= foe then Wear(f.them, foe, -D.FACE) end
+    f.themName:SetText(T.text("ink", foe))
+    if g then f.change:Hide() else f.change:Show() end
+  else
+    f.them:Hide(); f.themName:SetText(""); f.change:Hide()
+    f.list:Show(); f.listHead:Show(); f.who:Show()
+    local people = D.People()
+    D.scroll = math.max(0, math.min(D.scroll or 0, math.max(0, #people - D.ROWS)))
+    for i, r in ipairs(f.rows) do
+      local p = people[i + D.scroll]
+      r.person = p
+      if p then
+        r.text:SetText(p.online and ClassColour(p.class, p.name) or T.text("dim", p.name .. " (offline)"))
+        r:Show()
+      else
+        r:Hide()
+      end
+    end
+    if #people == 0 then
+      f.rows[1].person = nil
+      f.rows[1].text:SetText(T.text("muted", "nobody in your group"))
+      f.rows[1]:Show()
+    end
+  end
+
+  -- the middle
   local function lbl(b, text, off)
     b.text:SetText(text)
     K.SetOff(b, off and true or false)
     b:Show()
   end
+  local setup = not g
+  for _, r in ipairs({ f.startL, f.start, f.betL, f.bet }) do if setup then r:Show() else r:Hide() end end
   f.line1:SetText("") f.line2:SetText("") f.log:SetText("")
   if not g then
-    Form(true)
-    lbl(f.go, "challenge")
+    f.line1:SetText(T.text("muted", foe and "how much?" or "pick someone"))
+    lbl(f.go, "challenge", not foe)
     lbl(f.alt, "close")
     return
   end
-  Form(false)
   local stake = g.wager > 0 and K.Gold(g.wager) or "fun"
   if g.state == "ASKED" then
-    f.line1:SetText(T.text("ink", g.foe))
-    f.line2:SetText(T.text("muted", ("from %d for %s - waiting for an answer"):format(g.start, stake)))
+    f.line1:SetText(T.text("muted", "waiting for an answer"))
+    f.line2:SetText(T.text("muted", ("from %d for %s"):format(g.start, stake)))
     lbl(f.go, "challenge", true)
     lbl(f.alt, "take it back")
   elseif g.state == "INVITED" then
-    f.line1:SetText(T.text("ink", g.foe) .. T.text("muted", " challenges you"))
-    f.line2:SetText(T.text("muted", ("deathroll from %d for %s - they roll first"):format(g.start, stake)))
+    f.line1:SetText(T.text("ink", "challenged!"))
+    f.line2:SetText(T.text("muted", ("from %d for %s"):format(g.start, stake)))
+    f.log:SetText(T.text("muted", "they roll first"))
     lbl(f.go, "accept")
     lbl(f.alt, "decline")
   elseif g.state == "PLAY" then
     local mine = g.turn == me
     f.line1:SetText(mine and T.text("gold", ("your roll: 1 - %d"):format(g.max))
-      or T.text("ink", ("%s rolls 1 - %d"):format(g.turn, g.max)))
-    f.line2:SetText(T.text("muted", ("against %s, for %s"):format(g.foe, stake)))
+      or T.text("ink", ("%s: 1 - %d"):format(g.turn, g.max)))
+    f.line2:SetText(T.text("muted", ("for %s"):format(stake)))
     lbl(f.go, "roll", not mine or g.rolled)
     if f.go.hot ~= mine then K.SetHot(f.go, mine) end
     f.alt:Hide()
   else
     local won = g.winner == me
-    f.line1:SetText(won and T.text("good", "you win" .. (g.wager > 0 and (" " .. K.Gold(g.wager)) or ""))
-      or T.text("warn", "you rolled 1" .. (g.wager > 0 and (" - you owe " .. g.winner .. " " .. K.Gold(g.wager)) or "")))
-    f.line2:SetText(T.text("muted", ("against %s, from %d"):format(g.foe, g.start)))
+    -- two short lines: the middle column is narrow, and a sentence cut in half reads as nothing
+    f.line1:SetText(won and T.text("good", "you win") or T.text("warn", "you rolled 1"))
+    f.line2:SetText(g.wager == 0 and T.text("muted", "just for fun")
+      or won and T.text("good", ("%s owes you %s"):format(g.loser, K.Gold(g.wager)))
+      or T.text("warn", ("you owe %s %s"):format(g.winner, K.Gold(g.wager))))
     lbl(f.go, "again")
     if f.go.hot then K.SetHot(f.go, false) end
     lbl(f.alt, "done")
   end
-  -- the last few rolls, newest first
+  -- the rolls, down the middle, newest at the top: yours gold, theirs white, the 1 red
   local out = {}
-  for i = #g.rolls, math.max(1, #g.rolls - 4), -1 do
+  for i = #g.rolls, math.max(1, #g.rolls - 7), -1 do
     local r = g.rolls[i]
-    out[#out + 1] = ("%s %d (1-%d)"):format(r.who == me and "you" or r.who, r.roll, r.max)
+    local word = ("%s %d"):format(r.who == me and "you" or r.who, r.roll)
+    out[#out + 1] = r.roll == 1 and T.text("warn", word) or (r.who == me and T.text("gold", word) or T.text("ink", word))
   end
-  f.log:SetText(T.text("dim", table.concat(out, "   ")))
+  f.log:SetText(table.concat(out, "\n"))
+end
+
+--- The end: the winner cheers, the loser cries - the table's own reactions.
+function D.Celebrate(winner, loser)
+  local f = D.frame
+  if not f then return end
+  local me = K.MyName()
+  local function act(m, who)
+    if m and m:IsShown() then pcall(m.SetAnimation, m, who == winner and K.ANIM.cheer or K.ANIM.cry) end
+  end
+  act(f.me, me)
+  act(f.them, me == winner and loser or winner)
 end
 
 function D.Show(name)
   local f = D.Build()
-  if name and name ~= "" and not D.Active() then f.who:SetText(name) end
-  if not D.Active() and f.who:GetText() == "" and UnitIsPlayer and UnitIsPlayer("target") then
+  if name and name ~= "" and not D.Active() then D.pick = name f.who:SetText(name) end
+  if not D.Active() and not D.pick and UnitIsPlayer and UnitIsPlayer("target") then
     local t = K.Bare(UnitName("target"))
-    if t and t ~= K.MyName() then f.who:SetText(t) end
+    if t and t ~= K.MyName() and K.InGroup(t) then D.pick = t end
   end
   D.Refresh()
   f:Show()

@@ -2420,7 +2420,17 @@ do
   check(owed == 50, "and the wager is in the debts book: " .. tostring(owed))
   check(BiSGambaDB.rounds[id] and BiSGambaDB.rounds[id].mode == "dr", "and on the leaderboard as a deathroll")
   D.Refresh()
-  check(strip(D.frame.line1.text_):find("you owe Frank G 50g", 1, true), "the window says so: " .. strip(D.frame.line1.text_))
+  check(strip(D.frame.line1.text_) == "you rolled 1" and strip(D.frame.line2.text_) == "you owe Frank G 50g",
+        "the window says so, on two short lines: " .. strip(D.frame.line2.text_))
+  -- the duel (Arn, 17 Oct: "we are standing on the left them on the right, and rolls in the middle")
+  check(D.frame.me.who == "Kumlust" and D.frame.them.who == "Frank G", "you on the left, them on the right")
+  check(D.frame.me.model == "unit:player", "you in 3D: " .. tostring(D.frame.me.model))
+  check(D.frame.them.model == "display:" .. G.Kit.WISP, "a guildmate outside the group: a wisp, never nothing")
+  check(D.frame.me.anim == G.ANIM.cry and D.frame.them.anim == G.ANIM.cheer,
+        "you rolled the 1: you cry, they cheer")
+  local log = strip(D.frame.log.text_)
+  check(log:find("^you 1\n") and log:find("Frank G 120", 1, true) and log:find("you 300", 1, true),
+        "the rolls down the middle, newest first: " .. log:gsub("\n", " / "))
   fitsIn(BiSGambaDeathroll, "the deathroll window, over")
   D.frame.alt.scripts.OnClick()
   check(D.game == nil, "done clears it")
@@ -2450,9 +2460,37 @@ do
   runTimers(D.ANSWER + 1)
   check(D.game == nil, "no answer in a minute: it is dropped (they may not run BiS Gamba)")
 
+  -- before a game: the people in the group, a list to pick from; no number filled in for you
+  local wasRaid = inRaid
+  inRaid = true                                       -- an earlier section left us in no group at all
+  D.game, D.pick = nil, nil
+  D.Show()
+  check(D.frame.list:IsShown() and not D.frame.them:IsShown(), "nobody picked: the right side is the list")
+  local names = {}
+  for _, r in ipairs(D.frame.rows) do if r:IsShown() and r.person then names[#names + 1] = r.person.name end end
+  check(#names >= 2 and not table.concat(names, ","):find("Kumlust"), "your party or raid, without you: " .. table.concat(names, ","))
+  check((D.frame.start:GetText() or "") == "" and (D.frame.bet:GetText() or "") == "",
+        "no number filled in for you (Arn: \"no prefilled number\")")
+  check(D.frame.go.off, "challenge waits for someone picked")
+  fitsIn(BiSGambaDeathroll, "the deathroll window, picking")
+  local first
+  for _, r in ipairs(D.frame.rows) do if r:IsShown() and r.person and r.person.online then first = r break end end
+  first.scripts.OnClick(first)
+  check(D.pick == first.person.name and D.frame.them:IsShown() and not D.frame.list:IsShown(),
+        "clicked: they stand on the right")
+  addon = {}
+  D.frame.go.scripts.OnClick()
+  check(D.game == nil, "no start typed: nothing is sent")
+  D.frame.start:SetText("500")
+  D.frame.go.scripts.OnClick()
+  check(D.game and D.game.start == 500 and D.game.wager == 0, "a start typed, the wager empty: for fun")
+  D.TakeBack()
+  inRaid = wasRaid
+
   -- the slash command and the button
+  D.pick = nil
   SlashCmdList.BISGAMBA("dr Frank G")
-  check(D.frame:IsShown() and D.frame.who:GetText() == "Frank G", "/bisgamba dr <name> opens it, the name filled in")
+  check(D.frame:IsShown() and D.pick == "Frank G", "/bisgamba dr <name> opens it, them on the right")
   check(G.UI.drBtn ~= nil, "a deathroll button on the table")
   fitsIn(BiSGambaFrame, "the table with the deathroll button")
   D.frame:Hide()
