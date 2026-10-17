@@ -2163,6 +2163,7 @@ end
 --   3d     head-and-shoulders 3D portrait models in the same grid
 ----------------------------------------------------------------------------
 UI = { seats = {}, rows = {} }
+local SeatOf                     -- the seat a name sits in, yours included; defined with the reactions below
 G.UI = UI
 
 local VIEWS = { "2d", "3d" }
@@ -2180,7 +2181,8 @@ local CELL_H = ROLL_H + ART_H + 6 + TEXT_H
 local COLS = 13          -- up to 13 to a row now the cells are smaller
 local MIN_W = math.max(5 * CELL_W + 2 * PAD, 486)   -- the control row's floor, not the grid's
 local MAX_ROWS = 3       -- 39 seats, thirteen to a row - a full 25-man is two rows
-local ACT_W = 84         -- your buttons' column on the left: join, roll, leave, pay (17 Oct 2026)
+local ACT_W = 132        -- the left column: you, big, and your buttons under you (17 Oct 2026)
+local BIG_ART_W, BIG_ART_H = 100, 132   -- your own model in it
 local RATIO = 1.43       -- the BiS window shape: grow to fit, keep the shape (Arn, 14 Oct)
 
 -- Header prompt budget (bis-theme header law, landmine #9). The prompt+words sit
@@ -2255,6 +2257,14 @@ local function View() return db.view or "2d" end
 
 local function Pose(seat)
   local m = seat.model
+  if seat.big then
+    -- you: the whole body, turned toward the table
+    if m.SetPortraitZoom then pcall(m.SetPortraitZoom, m, 0) end
+    pcall(m.SetPosition, m, 0, 0, 0)
+    pcall(m.SetFacing, m, 0.5)
+    pcall(m.SetAnimation, m, seat.anim or ANIM.stand)
+    return
+  end
   if View() == "3d" then
     if m.SetPortraitZoom then pcall(m.SetPortraitZoom, m, db.portrait or 0.75)
     else pcall(m.SetPosition, m, 1.2, 0, -0.8) end
@@ -2310,7 +2320,7 @@ local function ApplyModel(seat)
 end
 
 local function ApplyArt(seat)
-  if View() == "2d" then
+  if View() == "2d" and not seat.big then           -- you are always in 3D
     seat.model:Hide(); seat.portrait:Show(); seat.frame2d:Show()
     ApplyPortrait(seat)
   else
@@ -2390,10 +2400,15 @@ local function Flicker(tex, fromA, toA, secs, fromS, toS)
   return g
 end
 
-local function MakeSeat(i, parent)
-  local seat = { index = i }
+local function MakeSeat(i, parent, big)
+  -- YOU, BIG (Arn, 17 Oct 2026: "us on the left always big 3d model them on the right smaller if
+  -- like 15 players"): the same seat, every part of it, at your size on the left
+  local aw, ah, cw = ART_W, ART_H, CELL_W
+  if big then aw, ah, cw = BIG_ART_W, BIG_ART_H, ACT_W - 8 end
+  local ch = ROLL_H + ah + 6 + TEXT_H
+  local seat = { index = i, big = big, aw = aw, ah = ah, cw = cw, ch = ch }
   local cell = CreateFrame("Frame", nil, parent)
-  cell:SetSize(CELL_W, CELL_H)
+  cell:SetSize(cw, ch)
   seat.cell = cell
 
   -- the art: a model and a portrait share the same box, one is shown at a time
@@ -2403,7 +2418,7 @@ local function MakeSeat(i, parent)
   m:SetScript("OnModelLoaded", function() Pose(seat) end)
 
   local f2 = CreateFrame("Frame", nil, cell, "BackdropTemplate")
-  f2:SetPoint("BOTTOM", cell, "TOP", 0, -(ROLL_H + ART_H))
+  f2:SetPoint("BOTTOM", cell, "TOP", 0, -(ROLL_H + ah))
   T.skin(f2, "line2")
   f2:SetBackdropColor(T.rgba("sunken", 1))
   seat.frame2d = f2
@@ -2436,8 +2451,8 @@ local function MakeSeat(i, parent)
   aura:SetTexture("Interface\\Cooldown\\star4")
   aura:SetBlendMode("ADD")
   aura:SetVertexColor(1, 0.82, 0.3)
-  aura:SetSize(ART_W + 26, ART_H + 28)
-  aura:SetPoint("CENTER", cell, "TOP", 0, -(ROLL_H + ART_H / 2))
+  aura:SetSize(aw + 26, ah + 28)
+  aura:SetPoint("CENTER", cell, "TOP", 0, -(ROLL_H + ah / 2))
   aura:Hide()
   Flicker(aura, 0.4, 0.8, 1.6, 0.94, 1.07)
   seat.aura = aura
@@ -2446,7 +2461,7 @@ local function MakeSeat(i, parent)
   gild:SetTexture("Interface\\Cooldown\\star4")
   gild:SetBlendMode("ADD")
   gild:SetVertexColor(1, 0.8, 0.25)
-  gild:SetSize(ART_W + 10, ART_W + 10)
+  gild:SetSize(aw + 10, aw + 10)
   gild:SetPoint("BOTTOM", hit, "BOTTOM", 0, -4)
   gild:Hide()
   Flicker(gild, 0.16, 0.34, 1.6, 0.96, 1.05)
@@ -2467,9 +2482,9 @@ local function MakeSeat(i, parent)
     Flicker(t, a1, a2, secs, s1, s2)
     flames[#flames + 1] = t
   end
-  flame(1, 0.22, 0.04, ART_W + 22, ART_H * 1.05, -10, 0.55, 0.9, 0.45, 0.95, 1.09)
-  flame(1, 0.5, 0.08, ART_W + 6, ART_H * 0.85, -7, 0.6, 1, 0.31, 0.9, 1.13)
-  flame(1, 0.85, 0.35, ART_W * 0.7, ART_H * 0.55, -4, 0.5, 1, 0.23, 0.85, 1.16)
+  flame(1, 0.22, 0.04, aw + 22, ah * 1.05, -10, 0.55, 0.9, 0.45, 0.95, 1.09)
+  flame(1, 0.5, 0.08, aw + 6, ah * 0.85, -7, 0.6, 1, 0.31, 0.9, 1.13)
+  flame(1, 0.85, 0.35, aw * 0.7, ah * 0.55, -4, 0.5, 1, 0.23, 0.85, 1.16)
   seat.flames = flames
 
   -- whoever is running the table wears the crown
@@ -2494,24 +2509,24 @@ local function MakeSeat(i, parent)
   -- a hairline under the art for state
   local ring = cell:CreateTexture(nil, "OVERLAY")
   ring:SetTexture("Interface\\Buttons\\WHITE8x8")
-  ring:SetSize(ART_W - 6, 2)
-  ring:SetPoint("TOP", cell, "TOP", 0, -(ROLL_H + ART_H + 3))
+  ring:SetSize(aw - 6, 2)
+  ring:SetPoint("TOP", cell, "TOP", 0, -(ROLL_H + ah + 3))
   ring:SetVertexColor(T.rgba("line2", 1))
   seat.ring = ring
 
   local name = cell:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   name:SetPoint("TOP", ring, "BOTTOM", 0, -1)
-  name:SetWidth(CELL_W - 2)
+  name:SetWidth(cw - 2)
   seat.name = name
 
   local owe = cell:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   owe:SetPoint("TOP", name, "BOTTOM", 0, 0)
-  owe:SetWidth(CELL_W - 2)
+  owe:SetWidth(cw - 2)
   seat.owe = owe
 
   local owe2 = cell:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   owe2:SetPoint("TOP", owe, "BOTTOM", 0, 0)
-  owe2:SetWidth(CELL_W - 2)
+  owe2:SetWidth(cw - 2)
   seat.owe2 = owe2
 
   -- on the hit frame, which sits above the art: on the cell it would be behind it
@@ -2526,9 +2541,10 @@ end
 -- The art box is the same rectangle in every view; only what fills it changes.
 -- The 2D portrait is square and sits on the same foot line as the models.
 local function SizeSeat(seat)
-  seat.model:SetSize(ART_W, ART_H)
-  seat.frame2d:SetSize(ART_W, ART_W)
-  seat.hit:SetSize(ART_W, ART_H)
+  local aw, ah = seat.aw or ART_W, seat.ah or ART_H
+  seat.model:SetSize(aw, ah)
+  seat.frame2d:SetSize(aw, aw)
+  seat.hit:SetSize(aw, ah)
   seat.hit:SetFrameLevel(seat.cell:GetFrameLevel() + 5)
 end
 
@@ -2571,7 +2587,7 @@ local function FillSeat(seat, p)
   for _, t in ipairs(seat.flames) do t:SetShown(losing) end
   local r, g, b = T.classRGB(p.class or "")
   -- 7 + "." is what a 46 px seat holds at 10 pt (the suite's fit check measures it)
-  seat.name:SetText(ShortName(p.name, 7))
+  seat.name:SetText(ShortName(p.name, seat.big and 16 or 7))
   seat.name:SetTextColor(r, g, b)
   if p.name == MyName() then seat.name:SetTextColor(T.rgb("gold")) end
   -- the 2D tile's rim carries the same news as the aura and the fire
@@ -2765,21 +2781,24 @@ function UI:Build()
   -- once joined leave lights up, once the game starts roll lights up, lose pay lights up"). The table's
   -- own controls (the range, start, last call, end) stay on top. Only the next thing to press is lit;
   -- the rest are there, dim, and never move.
+  -- two by two, under your big seat (which stands at the top of this column): join roll / leave pay
+  local BW = (ACT_W - 8 - 4) / 2
   local function Act(text, tip, fn)
-    local b = SmallButton(f, text, ACT_W - 8)
-    b:SetSize(ACT_W - 8, 24)
+    local b = SmallButton(f, text, BW)
+    b:SetSize(BW, 24)
     b.tip = tip
     b:SetScript("OnClick", function() box:ClearFocus(); if b.off then return end; fn() end)
     return b
   end
+  local top = HEAD_H + ROLL_H + BIG_ART_H + 6 + TEXT_H + 4
   local join = Act("join", "Types 1 in raid chat: you're in this round", function() Game.JoinMe() end)
-  join:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, -HEAD_H)
+  join:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, -top)
   local roll = Act("roll", "Roll the right range", function() Game.RollMe() end)
-  roll:SetPoint("TOP", join, "BOTTOM", 0, -4)
+  roll:SetPoint("LEFT", join, "RIGHT", 4, 0)
   local leave = Act("leave", "Types -1 in raid chat: out of this round", function() Game.JoinMe() end)
-  leave:SetPoint("TOP", roll, "BOTTOM", 0, -4)
+  leave:SetPoint("TOP", join, "BOTTOM", 0, -4)
   local pay = Act("pay", "Open a trade with the next person you owe and put the gold in", function() Trade.Pay() end)
-  pay:SetPoint("TOP", leave, "BOTTOM", 0, -4)
+  pay:SetPoint("LEFT", leave, "RIGHT", 4, 0)
   self.joinBtn, self.rollBtn, self.leaveBtn, self.payBtn = join, roll, leave, pay
 
   -- open this window by itself when a host starts a table?
@@ -2858,6 +2877,11 @@ function UI:Build()
   scene:SetHeight(100)
   self.scene = scene
   for i = 1, 40 do self.seats[i] = MakeSeat(i, scene) end
+  -- YOU, BIG, ON THE LEFT, always (Arn, 17 Oct); your buttons sit under you
+  self.mySeat = MakeSeat(0, f, true)
+  self.mySeat.cell:SetPoint("TOPLEFT", f, "TOPLEFT", PAD, -HEAD_H)
+  self.mySeat.cell:SetFrameLevel(scene:GetFrameLevel() + 2)
+  SizeSeat(self.mySeat)
 
   self.empty = scene:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   self.empty:SetPoint("CENTER", 0, 0)
@@ -2973,12 +2997,11 @@ function UI:Build()
       -- "go" that fires at zero.
       if n and n >= 2 and n <= 3 then Sound.Play("tick3", n) end
       if n then
-        for _, seat in ipairs(self.seats) do
-          if seat.person and seat.person.name == Game.host then
-            UI:Emote(seat, n <= 3 and ANIM.exclaim or ANIM.point, 1.1)
-            seat.mood:SetText(T.text(n <= 3 and "warn" or "accent", n))
-            break
-          end
+        -- the host's seat - yours, big on the left, when you host
+        local seat = SeatOf(Game.host)
+        if seat and seat.person then
+          UI:Emote(seat, n <= 3 and ANIM.exclaim or ANIM.point, 1.1)
+          seat.mood:SetText(T.text(n <= 3 and "warn" or "accent", n))
         end
       end
     end
@@ -3019,8 +3042,10 @@ local function GridLayout(self, n, minW)
   local w = math.max(widest * CELL_W + PAD * 2, MIN_W - ACT_W, minW or 0)
   local base = scene:GetFrameLevel() + 2
 
+  -- everyone but you: you stand big on the left (UI.mySeat)
+  local others = UI.Others()
   for i, seat in ipairs(self.seats) do
-    local p = Game.order[i] and Game.players[Game.order[i]]
+    local p = others[i] and Game.players[others[i]]
     if p then
       local r, col = math.floor((i - 1) / COLS), (i - 1) % COLS
       local rowCount = (r == rows - 1) and (n - r * COLS) or COLS
@@ -3037,8 +3062,33 @@ local function GridLayout(self, n, minW)
   return w, (n == 0) and 44 or rows * CELL_H   -- empty is a short strip, not a full row
 end
 
+--- The people at the table who are not you, in seat order.
+function UI.Others()
+  local me, out = MyName(), {}
+  for _, name in ipairs(Game.order) do if name ~= me then out[#out + 1] = name end end
+  return out
+end
+
+--- Your big seat: you at the table, or you standing by when you are not.
+function UI:FillMine()
+  if not self.mySeat then return end
+  local me = MyName()
+  local p = Game.players[me]
+  if not p then
+    local _, class = UnitClass("player")
+    local race
+    if UnitRace then
+      local _, r = UnitRace("player")          -- written out: `UnitRace and UnitRace()` drops the second
+      race = r
+    end
+    p = { name = me, class = class, race = race, sex = UnitSex and UnitSex("player") or 2 }
+  end
+  FillSeat(self.mySeat, p)
+end
+
 function UI:Layout()
-  local n = math.min(#Game.order, COLS * MAX_ROWS)
+  local n = math.min(#UI.Others(), COLS * MAX_ROWS)
+  self:FillMine()
   local w, h = GridLayout(self, n)
   self.scene:SetHeight(h)
   local dh = 0
@@ -3060,7 +3110,9 @@ function UI:Layout()
   -- 1.43:1 (Arn, 17 Oct: "fix this window up, like the new aspect ratio"): never shorter than your
   -- four buttons; too narrow for its height, the seats get the extra width (and stay centred); too
   -- wide, the room goes at the bottom
-  local content = math.max(h + dh + bh, 4 * 28)
+  -- the left column: your big seat and two rows of buttons under it
+  local left = ROLL_H + BIG_ART_H + 6 + TEXT_H + 4 + 2 * 28
+  local content = math.max(h + dh + bh, left)
   local H = HEAD_H + content + PAD + 28
   local W = w + ACT_W
   if W < H * RATIO then
@@ -3393,7 +3445,9 @@ function UI:Toggle()
   if self.frame:IsShown() then self.frame:Hide() else self:Show() end
 end
 
-local function SeatOf(name)
+function SeatOf(name)
+  -- you have your own big seat on the left: your cheers, cries and turns play there
+  if UI.mySeat and name == MyName() then return UI.mySeat end
   for _, seat in ipairs(UI.seats) do
     if seat.person and seat.person.name == name then return seat end
   end

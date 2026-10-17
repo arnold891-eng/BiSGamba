@@ -352,6 +352,13 @@ for _, f in ipairs(TOC) do
   fn("BiSGamba")
 end
 local G = BiSGamba
+-- every seat, yours included: since 17 Oct you stand big on the left (G.UI.mySeat), not in the grid
+local function allSeats()
+  local out = {}
+  if G.UI and G.UI.mySeat then out[1] = G.UI.mySeat end
+  for _, s in ipairs((G.UI and G.UI.seats) or {}) do out[#out + 1] = s end
+  return out
+end
 local ev
 for _, name in ipairs({ "BiSGambaFrame" }) do end
 -- find the event frame: the last CreateFrame("Frame") with an OnEvent script
@@ -500,7 +507,7 @@ local function sent(op) for _, m in ipairs(addon) do if m:find("^" .. op) then r
 check(sent("OPEN\t200") and sent("JOIN\tDps2") and sent("GO") and sent("ROLL\tDps1\t180") and sent("DONE\tDps1\tDps2\t160\t180\t20"), "host broadcast the round")
 -- emotes
 local function seatAnim(name)
-  for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == name then return s.model.anim, s.model.model end end
+  for _, s in ipairs(allSeats()) do if s.person and s.person.name == name then return s.model.anim, s.model.model end end
 end
 check(seatAnim("Dps1") == 68, "winner cheers")
 check(seatAnim("Dps2") == 77, "loser cries")
@@ -560,7 +567,7 @@ check(G.Game.result and G.Game.result.winner == "Dps1" and G.Game.result.loser =
 -- the round carries exactly one loser field, so only one player can ever take the loss.
 check(G.Game.result.loser == "Dps2" and G.Game.result.loser ~= "Kumlust", "the co-low-roller is not booked as a second loser")
 check(type(G.Game.result.loser) == "string", "a round has one loser, not a list")
-for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then end end
+for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Kumlust" then end end
 
 ---------------------------------------------------------------- the window says it in English
 G.UI:Show()
@@ -820,7 +827,7 @@ check(G.UI.callBtn.off, "no second countdown")
 _G.__now = 2004
 G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
 local hostSeat
-for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then hostSeat = s_ end end
+for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Kumlust" then hostSeat = s_ end end
 check(hostSeat and strip(hostSeat.roll.text_) == "6", "host portrait shows 6: " .. tostring(hostSeat and strip(hostSeat.roll.text_)))
 _G.__now = 2008
 G.UI.frame.scripts.OnUpdate(G.UI.frame, 0.1)
@@ -1013,8 +1020,11 @@ SlashCmdList.BISGAMBA("popup"); check(BiSGambaDB.autoOpen == true, "popup toggle
 from("Dps2", "CLOSE"); G.UI:Show()
 SlashCmdList.BISGAMBA("start 60"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); SlashCmdList.BISGAMBA("go"); fire("CHAT_MSG_SYSTEM", "Kumlust rolls 30 (1-60)")
 SlashCmdList.BISGAMBA("view 2d"); G.UI:Refresh()
-local s2 = nil; for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then s2 = s_ end end
-check(s2 and s2.portrait.shown and not s2.model.shown and s2.portrait.portrait == "player", "2d uses the live portrait")
+local s2 = nil; for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Kumlust" then s2 = s_ end end
+-- you are always the big 3D model (Arn, 17 Oct: "us on the left always big 3d model"); the others go 2D
+check(s2 and s2 == G.UI.mySeat and s2.model.shown and not s2.portrait.shown, "2d view: you stay a 3D model, big, on the left")
+local o2 = nil; for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumsecration" then o2 = s_ end end
+check(o2 and o2.portrait.shown and not o2.model.shown, "and the others turn to portraits")
 SlashCmdList.BISGAMBA("reset")
 
 ---------------------------------------------------------------- no whisper between addon users
@@ -1145,7 +1155,7 @@ from("Dps2", "OPEN", "80")
 from("Dps2", "JOIN", "Dps2"); from("Dps2", "JOIN", "Kumlust")
 check(not G.Game.IsHost() and G.Game.host == "Dps2", "they host")
 local hostSeat
-for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Dps2" then hostSeat = s_ end end
+for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == "Dps2" then hostSeat = s_ end end
 check(hostSeat and hostSeat.crown.shown, "and wear the crown")
 -- a running table can't be stolen
 SlashCmdList.BISGAMBA("start 100")
@@ -1159,7 +1169,7 @@ SlashCmdList.BISGAMBA("start 100")
 check(G.Game.IsHost() and G.Game.host == "Kumlust" and G.Game.state == "JOIN", "we host the next one")
 check(not G.UI.startBtn.off and not G.UI.callBtn.off, "and the controls come alive")
 G.UI:Refresh()
-for _, s_ in ipairs(G.UI.seats) do
+for _, s_ in ipairs(allSeats()) do
   if s_.person and s_.person.name == "Kumlust" then check(s_.crown.shown, "the crown moved to us") end
   if s_.person and s_.person.name == "Dps2" then check(not s_.crown.shown, "and left them") end
 end
@@ -1337,7 +1347,7 @@ check(strip(G.UI.boardRows[1].net.text_) == "+500g", "and their net: " .. strip(
 check(strip(G.UI.boardRows[1].name.text_):find("host"), "the host is marked")
 fitsIn(BiSGambaFrame, "the table with the leaderboard open")
 -- the effects
-local function seatOf(name) for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == name then return s_ end end end
+local function seatOf(name) for _, s_ in ipairs(allSeats()) do if s_.person and s_.person.name == name then return s_ end end end
 check(seatOf("Kumlust").aura.shown, "biggest winner gets the gold aura")
 -- the 2D tile is opaque, so the winner needs a glow in front of it too
 SlashCmdList.BISGAMBA("view 2d"); G.UI:Refresh()
@@ -1952,6 +1962,18 @@ G.UI:Layout()
 check(math.abs(G.UI.frame.w / G.UI.frame.h - 1.43) < 0.01, "seated: the window is 1.43:1 (" .. G.UI.frame.w .. "x" .. G.UI.frame.h .. ")")
 check(G.UI.frame.h >= emptyH, "and never smaller than the empty table")
 G.UI:Refresh(); fitsIn(BiSGambaFrame, "the table, seated, with your buttons in a column")
+-- YOU, BIG, ON THE LEFT (Arn, 17 Oct: "us on the left always big 3d model them on the right smaller")
+check(G.UI.mySeat and G.UI.mySeat.big and G.UI.mySeat.person and G.UI.mySeat.person.name == "Kumlust",
+      "you have the big seat on the left")
+check(G.UI.mySeat.aw > 2 * 30, "a big model, not a seat-sized one: " .. tostring(G.UI.mySeat.aw))
+local mine = 0
+for _, s_ in ipairs(G.UI.seats) do if s_.person and s_.person.name == "Kumlust" then mine = mine + 1 end end
+check(mine == 0, "and you are not in the grid twice")
+local others = 0
+for _, s_ in ipairs(G.UI.seats) do if s_.person then others = others + 1 end end
+check(others == 3, "the other three sit in the grid: " .. others)
+SlashCmdList.BISGAMBA("reset"); G.UI:Layout()
+check(G.UI.mySeat.person and G.UI.mySeat.person.name == "Kumlust", "no table at all: you still stand there")
 SlashCmdList.BISGAMBA("reset"); G.UI:Layout()
 check(math.abs(G.UI.frame.h - emptyH) < 1, "and shrinks back to the short empty strip when it clears")
 
@@ -2035,7 +2057,7 @@ SlashCmdList.BISGAMBA("reset")
 SlashCmdList.BISGAMBA("reset"); BiSGambaDB.rounds = {}; BiSGambaDB.boardScope = "all"
 SlashCmdList.BISGAMBA("start 100"); G.UI:Show()
 fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration"); fire("CHAT_MSG_RAID", "1", "Dps4")
-local function bseat(nm) for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == nm then return s end end end
+local function bseat(nm) for _, s in ipairs(allSeats()) do if s.person and s.person.name == nm then return s end end end
 -- Gnomer: two wins trailing; Kum: two losses trailing; Winter: a lone win (run of 1)
 rnd("b1", 100, "Dps2", "Kumsecration"); rnd("b2", 200, "Dps2", "Kumsecration")
 rnd("b3", 300, "Dps4", "Dps5")
@@ -2051,7 +2073,7 @@ SlashCmdList.BISGAMBA("reset"); BiSGambaDB.rounds = {}
 SlashCmdList.BISGAMBA("reset"); SlashCmdList.BISGAMBA("start 100"); G.UI:Show()
 fire("CHAT_MSG_RAID", "1", "Dps2"); fire("CHAT_MSG_RAID", "1", "Kumsecration")
 G.UI:Refresh()
-local function seatOf(nm) for _, s in ipairs(G.UI.seats) do if s.person and s.person.name == nm then return s end end end
+local function seatOf(nm) for _, s in ipairs(allSeats()) do if s.person and s.person.name == nm then return s end end end
 local A = G.ANIM
 -- a rolled 1: the roller cries, the rest of the table laughs at them
 G.UI:OnRoll("Dps2", 1)
