@@ -2394,6 +2394,17 @@ end
 -- team pays winning team"; "each loser pays one winner"; "both teams roll again"; the audible:
 -- "round up or down on what ever the wager is divisible evenly ... what ever is closer"
 do
+  -- "LAST CALL 0" ON AN IDLE TABLE (Arn's screenshot, 17 Oct): a table ended mid-countdown kept it
+  SlashCmdList.BISGAMBA("reset")
+  SlashCmdList.BISGAMBA("start 100")
+  G.UI.callBtn.scripts.OnClick()
+  check(G.Game.Countdown() ~= nil, "a last call is running")
+  SlashCmdList.BISGAMBA("end")
+  G.UI:Refresh()
+  check(G.Game.state == "IDLE" and G.Game.Countdown() == nil, "ended mid-countdown: no countdown left over")
+  check(strip(G.UI.callBtn.text.text_) == "last call", "the button says last call, not \"last call 0\"")
+  runTimers()
+
   -- the audible's arithmetic, against his own examples
   check(G.Game.Split(100, 5) == 20, "100, 5 a side: everyone rolls 20")
   check(G.Game.Split(100, 3) == 33, "100, 3 a side: 99, not 102 - the closer")
@@ -2623,6 +2634,28 @@ do
   D.frame.fun.scripts.OnClick()
   D.frame.bet:SetText("")
   inRaid = wasRaid
+
+  -- BESIDE THE TABLE, NOT UNDER IT (Arn's screenshot, 17 Oct: the deathroll list was covered by the
+  -- table). The table on screen with room to its left: deathroll opens there, in front.
+  G.UI:Show()
+  BiSGambaFrame.GetLeft = function() return 700 end
+  BiSGambaFrame.GetRight = function() return 1200 end
+  local raised = false
+  D.frame.Raise = function() raised = true end
+  D.frame:Hide(); D.Show()
+  local at = D.frame.points[#D.frame.points]
+  check(at and at.point == "TOPRIGHT" and at.rel == BiSGambaFrame and at.relPoint == "TOPLEFT",
+        "deathroll opens to the left of the table, never on it")
+  check(raised, "and in front")
+  BiSGambaFrame.GetLeft = function() return 20 end
+  BiSGambaFrame.GetRight = function() return 520 end
+  local realW = UIParent.GetWidth
+  UIParent.GetWidth = function() return 1920 end           -- the mock's UIParent is 100 px: a screen is not
+  D.frame:Hide(); D.Show()
+  at = D.frame.points[#D.frame.points]
+  check(at and at.point == "TOPLEFT" and at.relPoint == "TOPRIGHT", "no room on the left: to its right")
+  UIParent.GetWidth = realW
+  BiSGambaFrame.GetLeft, BiSGambaFrame.GetRight, D.frame.Raise = nil, nil, nil
 
   -- the slash command and the button
   D.pick = nil

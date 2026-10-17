@@ -922,7 +922,9 @@ local latecomers = {}      -- who has already been told they missed this one
 
 --- Seconds left on the last call, or nil when there is no countdown running.
 function Game.Countdown()
-  if not Game.countdownEnd then return nil end
+  -- only an open table counts down (17 Oct 2026: "last call 0" sat on an idle table after one was
+  -- ended mid-countdown - the end time was never cleared)
+  if not Game.countdownEnd or Game.state ~= "JOIN" then return nil end
   local left = Game.countdownEnd - GetTime()
   if left < 0 then left = 0 end
   return left
@@ -1407,7 +1409,7 @@ function Game.End()
     return
   end
   if Game.state == "ROLL" or Game.state == "TIE" then Game.Check(true)
-  elseif Game.state == "JOIN" then Game.state = "IDLE"; Comm.Send("CLOSE"); Say("BiS Gamba · table closed"); UI:Refresh()
+  elseif Game.state == "JOIN" then Game.state = "IDLE"; Game.countdownEnd = nil; Comm.Send("CLOSE"); Say("BiS Gamba · table closed"); UI:Refresh()
   else Game.state = "IDLE"; Game.players, Game.order = {}, {}; Comm.Send("CLOSE"); UI:Refresh() end
 end
 

@@ -605,7 +605,28 @@ function D.Show(name)
     if t and t ~= K.MyName() and K.InGroup(t) then D.pick = t end
   end
   D.Refresh()
+  D.Place()
   f:Show()
+  if f.Raise then f:Raise() end
+end
+
+--- IN FRONT, AND BESIDE THE TABLE, NOT ON IT (Arn's screenshot, 17 Oct 2026: the deathroll window
+--- opened under the Gamba table, its list covered). The family rule: a window never opens on top of
+--- another. Left of the table when there is room, else right of it, else where it was.
+function D.Place()
+  local f, t = D.frame, _G.BiSGambaFrame
+  if f.SetToplevel then f:SetToplevel(true) end
+  if not (t and t:IsShown() and t.GetLeft and t:GetLeft() and t.GetRight and t:GetRight()) then return end
+  local screen = UIParent.GetWidth and UIParent:GetWidth() or 1920
+  local left, right = t:GetLeft(), t:GetRight()
+  f:ClearAllPoints()
+  if left - D.W - 8 >= 0 then
+    f:SetPoint("TOPRIGHT", t, "TOPLEFT", -8, 0)
+  elseif right + 8 + D.W <= screen then
+    f:SetPoint("TOPLEFT", t, "TOPRIGHT", 8, 0)
+  else
+    f:SetPoint("TOP", t, "BOTTOM", 0, -8)
+  end
 end
 
 function D.Toggle()
